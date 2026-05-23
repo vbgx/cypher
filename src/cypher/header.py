@@ -1,4 +1,6 @@
-from dataclasses import dataclass
+import json
+from dataclasses import asdict, dataclass
+from pathlib import Path
 
 from cypher.config import (
     CHECKSUM_ALGORITHM,
@@ -9,18 +11,12 @@ from cypher.config import (
 )
 
 
-HEADER_SEPARATOR = "|"
-
-
 @dataclass(frozen=True)
 class CypherHeader:
-    """
-    Metadata required to decode a cypher audio stream.
-    """
-
     width: int
     height: int
     pixel_duration: float
+    sample_rate: int
     checksum: str
     magic: str = MAGIC
     version: int = HEADER_VERSION
@@ -33,147 +29,74 @@ def create_header(
     width: int,
     height: int,
     pixel_duration: float,
+    sample_rate: int,
     checksum: str,
 ) -> CypherHeader:
-    """
-    Create and validate a cypher header.
-    """
     header = CypherHeader(
         width=width,
         height=height,
         pixel_duration=pixel_duration,
+        sample_rate=sample_rate,
         checksum=checksum,
     )
 
     validate_header(header)
-
     return header
 
 
 def validate_header(header: CypherHeader) -> None:
-    """
-    Validate header consistency.
-    """
     if header.magic != MAGIC:
-        raise ValueError(f"Invalid magic value: {header.magic}")
+        raise ValueError(f"Invalid magic: {header.magic}")
 
     if header.version != HEADER_VERSION:
-        raise ValueError(f"Unsupported header version: {header.version}")
+        raise ValueError(f"Unsupported version: {header.version}")
 
-    if header.width <= 0:
-        raise ValueError("Header width must be greater than 0")
-
-    if header.height <= 0:
-        raise ValueError("Header height must be greater than 0")
+    if header.width <= 0 or header.height <= 0:
+        raise ValueError("Invalid image dimensions")
 
     if header.pixel_duration <= 0:
-        raise ValueError("Pixel duration must be greater than 0")
+        raise ValueError("Invalid pixel duration")
 
-    if header.color_mode != COLOR_MODE:
-        raise ValueError(f"Unsupported color mode: {header.color_mode}")
-
-    if header.pixel_mode != PIXEL_MODE:
-        raise ValueError(f"Unsupported pixel mode: {header.pixel_mode}")
-
-    if header.checksum_algorithm != CHECKSUM_ALGORITHM:
-        raise ValueError(
-            f"Unsupported checksum algorithm: {header.checksum_algorithm}"
-        )
+    if header.sample_rate <= 0:
+        raise ValueError("Invalid sample rate")
 
     if not header.checksum:
         raise ValueError("Checksum cannot be empty")
 
 
-def serialize_header(header: CypherHeader) -> str:
-    """
-    Serialize header to a deterministic string.
-    """
+def metadata_path_for_audio(audio_path: str | Path) -> Path:
+    path = Path(audio_path)
+    return path.with_suffix(".json")
+
+
+def save_header(header: CypherHeader, audio_path: str | Path) -> Path:
     validate_header(header)
 
-    return HEADER_SEPARATOR.join(
-        [
-            header.magic,
-            str(header.version),
-            str(header.width),
-            str(header.height),
-            header.color_mode,
-            header.pixel_mode,
-            format(header.pixel_duration, ".10g"),
-            header.checksum_algorithm,
-            header.checksum,
-        ]
+    metadata_path = metadata_path_for_audio(audio_path)
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+
+    metadata_path.write_text(
+        json.dumps(asdict(header), indent=2, sort_keys=True),
+        encoding="utf-8",
     )
 
+    return metadata_path
 
-def deserialize_header(raw: str) -> CypherHeader:
-    """
-    Deserialize a header string into a CypherHeader.
-    """
-    parts = raw.strip().split(HEADER_SEPARATOR)
 
-    if len(parts) != 9:
-        raise ValueError(
-            f"Invalid header field count: expected 9, got {len(parts)}"
-        )
+def load_header(audio_path: str | Path) -> CypherHeader:
+    metadata_path = metadata_path_for_audio(audio_path)
 
-    (
-        magic,
-        version_raw,
-        width_raw,
-        height_raw,
-        color_mode,
-        pixel_mode,
-        pixel_duration_raw,
-        checksum_algorithm,
-        checksum,
-    ) = parts
+    if not metadata_path.exists():
+        raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
 
-    header = CypherHeader(
-        magic=magic,
-        version=int(version_raw),
-        width=int(width_raw),
-        height=int(height_raw),
-        color_mode=color_mode,
-        pixel_mode=pixel_mode,
-        pixel_duration=float(pixel_duration_raw),
-        checksum_algorithm=checksum_algorithm,
-        checksum=checksum,
-    )
+    data = json.loads(metadata_path.read_text(encoding="utf-8"))
 
+    header = CypherHeader(**data)
     validate_header(header)
 
     return header
 
 
 def get_pixel_count(header: CypherHeader) -> int:
-    """
-    Return expected number of pixels from header dimensions.
-    """
     validate_header(header)
-
     return header.width * header.height
-
-
-def main() -> None:
-    """
-    Simple manual test.
-    """
-    header = create_header(
-        width=100,
-        height=100,
-        pixel_duration=0.01,
-        checksum="abc123",
-    )
-
-    serialized = serialize_header(header)
-
-    print(serialized)
-
-    restored = deserialize_header(serialized)
-
-    print(restored)
-    print(f"Pixel count: {get_pixel_count(restored)}")
-
-
-if __name__ == "__main__":
-    main()

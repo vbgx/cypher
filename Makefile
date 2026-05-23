@@ -1,24 +1,20 @@
 PYTHON := python
 PIP := pip
 
-SRC := src
-TESTS := tests
+.PHONY: help install install-dev test lint format typecheck check clean tree encode decode decore
 
-.PHONY: help install install-dev test lint format typecheck check clean tree encode-demo decode-demo
+CMD := $(firstword $(MAKECMDGOALS))
+ARG := $(word 2,$(MAKECMDGOALS))
 
 help:
-	@echo "Available commands:"
-	@echo "  make install       Install package"
-	@echo "  make install-dev   Install package with dev dependencies"
-	@echo "  make test          Run tests"
-	@echo "  make lint          Run ruff lint"
-	@echo "  make format        Run ruff format"
-	@echo "  make typecheck     Run mypy"
-	@echo "  make check         Run lint + typecheck + tests"
-	@echo "  make clean         Remove cache/build files"
-	@echo "  make tree          Show project tree"
-	@echo "  make encode-demo   Encode data/input/example.png"
-	@echo "  make decode-demo   Decode data/audio/example.wav"
+	@echo "Usage:"
+	@echo "  make encode example.jpg"
+	@echo "  make encode image.png"
+	@echo "  make decode example.flac"
+	@echo "  make decode example.wav"
+	@echo ""
+	@echo "Default encode output: data/audio/<name>.flac"
+	@echo "Default decode output: data/output/<name>.png"
 
 install:
 	$(PIP) install -e .
@@ -36,17 +32,12 @@ format:
 	ruff format .
 
 typecheck:
-	mypy $(SRC)
+	mypy src
 
 check: lint typecheck test
 
 clean:
-	rm -rf .pytest_cache
-	rm -rf .mypy_cache
-	rm -rf .ruff_cache
-	rm -rf build
-	rm -rf dist
-	rm -rf *.egg-info
+	rm -rf .pytest_cache .mypy_cache .ruff_cache build dist *.egg-info
 	find . -type d -name "__pycache__" -prune -exec rm -rf {} +
 	find . -type f -name "*.pyc" -delete
 
@@ -54,13 +45,28 @@ tree:
 	find . \
 		-path "./.git" -prune -o \
 		-path "./.venv" -prune -o \
-		-path "./__pycache__" -prune -o \
 		-print
 
-encode-demo:
-	cypher encode data/input/example.png data/audio/example.wav
+encode:
+	@if [ -z "$(ARG)" ]; then \
+		echo "Usage: make encode example.jpg"; \
+		exit 1; \
+	fi
+	cypher encode "$(ARG)"
 
-decode-demo:
-	cypher decode data/audio/example.wav data/output/restored.png \
-		--width 100 \
-		--height 100
+decode:
+	@if [ -z "$(ARG)" ]; then \
+		echo "Usage: make decode example.flac"; \
+		exit 1; \
+	fi
+	cypher decode "$(ARG)"
+
+decore:
+	@if [ -z "$(ARG)" ]; then \
+		echo "Usage: make decore example.flac"; \
+		exit 1; \
+	fi
+	cypher decore "$(ARG)"
+
+%:
+	@:
