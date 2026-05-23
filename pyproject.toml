@@ -1,0 +1,106 @@
+[build-system]
+requires = ["setuptools>=80", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cypher"
+version = "0.1.0"
+description = "Encode images into sound and decode sound back into images."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+
+authors = [
+    { name = "Victor Bergeroux", email = "v.bergeroux@gmail.com" }
+]
+
+keywords = [
+    "audio",
+    "image",
+    "signal-processing",
+    "cryptography",
+    "rgb",
+    "wav",
+    "encoding",
+    "decoding"
+]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Scientific/Engineering :: Image Processing"
+]
+
+dependencies = [
+    "numpy>=2.2",
+    "Pillow>=11.2",
+    "scipy>=1.15",
+]
+
+[project.optional-dependencies]
+
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.1",
+    "ruff>=0.11",
+    "mypy>=1.15",
+]
+
+[project.scripts]
+
+cypher = "cypher.cli:main"
+
+[tool.setuptools]
+
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+
+where = ["src"]
+
+[tool.pytest.ini_options]
+
+testpaths = ["tests"]
+
+python_files = [
+    "test_*.py"
+]
+
+addopts = [
+    "--strict-markers",
+    "--tb=short",
+    "--cov=cypher",
+    "--cov-report=term-missing"
+]
+
+[tool.ruff]
+
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+
+select = [
+    "E",
+    "F",
+    "I",
+    "UP",
+    "B"
+]
+
+[tool.mypy]
+
+python_version = "3.12"
+
+strict = true
+
+warn_unused_configs = true
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
