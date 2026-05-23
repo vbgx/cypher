@@ -5,6 +5,7 @@ from pathlib import Path
 from cypher.config import (
     CHECKSUM_ALGORITHM,
     COLOR_MODE,
+    COMPRESSION_ALGORITHM,
     HEADER_VERSION,
     MAGIC,
     PIXEL_MODE,
@@ -15,32 +16,37 @@ from cypher.config import (
 class CypherHeader:
     width: int
     height: int
-    pixel_duration: float
     sample_rate: int
+    raw_size: int
+    compressed_size: int
     checksum: str
     magic: str = MAGIC
     version: int = HEADER_VERSION
     color_mode: str = COLOR_MODE
     pixel_mode: str = PIXEL_MODE
     checksum_algorithm: str = CHECKSUM_ALGORITHM
+    compression_algorithm: str = COMPRESSION_ALGORITHM
 
 
 def create_header(
     width: int,
     height: int,
-    pixel_duration: float,
     sample_rate: int,
+    raw_size: int,
+    compressed_size: int,
     checksum: str,
 ) -> CypherHeader:
     header = CypherHeader(
         width=width,
         height=height,
-        pixel_duration=pixel_duration,
         sample_rate=sample_rate,
+        raw_size=raw_size,
+        compressed_size=compressed_size,
         checksum=checksum,
     )
 
     validate_header(header)
+
     return header
 
 
@@ -54,19 +60,32 @@ def validate_header(header: CypherHeader) -> None:
     if header.width <= 0 or header.height <= 0:
         raise ValueError("Invalid image dimensions")
 
-    if header.pixel_duration <= 0:
-        raise ValueError("Invalid pixel duration")
-
     if header.sample_rate <= 0:
         raise ValueError("Invalid sample rate")
+
+    if header.raw_size <= 0:
+        raise ValueError("Invalid raw payload size")
+
+    if header.compressed_size <= 0:
+        raise ValueError("Invalid compressed payload size")
 
     if not header.checksum:
         raise ValueError("Checksum cannot be empty")
 
+    if header.color_mode != COLOR_MODE:
+        raise ValueError(f"Unsupported color mode: {header.color_mode}")
+
+    if header.pixel_mode != PIXEL_MODE:
+        raise ValueError(f"Unsupported pixel mode: {header.pixel_mode}")
+
+    if header.compression_algorithm != COMPRESSION_ALGORITHM:
+        raise ValueError(
+            f"Unsupported compression algorithm: {header.compression_algorithm}"
+        )
+
 
 def metadata_path_for_audio(audio_path: str | Path) -> Path:
-    path = Path(audio_path)
-    return path.with_suffix(".json")
+    return Path(audio_path).with_suffix(".json")
 
 
 def save_header(header: CypherHeader, audio_path: str | Path) -> Path:
@@ -92,6 +111,7 @@ def load_header(audio_path: str | Path) -> CypherHeader:
     data = json.loads(metadata_path.read_text(encoding="utf-8"))
 
     header = CypherHeader(**data)
+
     validate_header(header)
 
     return header

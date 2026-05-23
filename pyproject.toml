@@ -42,6 +42,7 @@ dependencies = [
     "Pillow>=11.2",
     "scipy>=1.15",
     "soundfile>=0.13",
+    "tqdm>=4.66",
 ]
 
 [project.optional-dependencies]

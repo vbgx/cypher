@@ -1,85 +1,125 @@
 from pathlib import Path
+import zlib
 
 import numpy as np
-from scipy.io import wavfile
+import soundfile as sf
+from tqdm import tqdm
+
+from cypher.config import DEFAULT_COMPRESSION_LEVEL, DEFAULT_SAMPLE_RATE
+
 
 RGBPixel = tuple[int, int, int]
 
-DEFAULT_SAMPLE_RATE = 44_100
-DEFAULT_PIXEL_DURATION = 0.01
-DEFAULT_AMPLITUDE = 0.25
 
-R_FREQ = 500.0
-G_FREQ = 1500.0
-B_FREQ = 2500.0
+def pixels_to_bytes(pixels: list[RGBPixel]) -> bytes:
+    """
+    Convert RGB pixels to exact raw bytes.
+    """
+    payload = bytearray()
 
+    for r, g, b in tqdm(
+        pixels,
+        desc="Packing RGB bytes",
+        unit="px",
+    ):
+        payload.extend((r, g, b))
 
-def generate_sine(frequency: float, duration: float, sample_rate: int) -> np.ndarray:
-    n = int(sample_rate * duration)
-    t = np.arange(n) / sample_rate
-    return np.sin(2 * np.pi * frequency * t)
-
-
-def generate_pixel_frame(
-    pixel: RGBPixel,
-    duration: float,
-    sample_rate: int,
-    amplitude: float,
-) -> np.ndarray:
-    r, g, b = pixel
-
-    r_amp = amplitude * (r / 255)
-    g_amp = amplitude * (g / 255)
-    b_amp = amplitude * (b / 255)
-
-    frame = (
-        r_amp * generate_sine(R_FREQ, duration, sample_rate)
-        + g_amp * generate_sine(G_FREQ, duration, sample_rate)
-        + b_amp * generate_sine(B_FREQ, duration, sample_rate)
-    )
-
-    return frame.astype(np.float32)
+    return bytes(payload)
 
 
-def encode_pixels(
-    pixels: list[RGBPixel],
-    pixel_duration: float = DEFAULT_PIXEL_DURATION,
+def compress_payload(
+    payload: bytes,
+    compression_level: int = DEFAULT_COMPRESSION_LEVEL,
+) -> bytes:
+    """
+    Compress raw RGB bytes losslessly.
+    """
+    print("Compressing payload with zlib...")
+    print(f"Raw size        : {len(payload):,} bytes")
+    print(f"Compression lvl : {compression_level}")
+
+    compressed = zlib.compress(payload, level=compression_level)
+
+    ratio = len(compressed) / len(payload)
+
+    print(f"Compressed size : {len(compressed):,} bytes")
+    print(f"Ratio           : {ratio:.2%}")
+
+    return compressed
+
+
+def bytes_to_int16_samples(payload: bytes) -> np.ndarray:
+    """
+    Store bytes as int16 audio samples.
+
+    Each pair of bytes becomes one signed int16 sample.
+    If payload length is odd, one zero byte is appended.
+    """
+    print("Converting compressed bytes to audio samples...")
+
+    if len(payload) % 2 != 0:
+        payload += b"\x00"
+
+    samples = np.frombuffer(payload, dtype=np.int16).copy()
+
+    print(f"Audio samples   : {len(samples):,}")
+
+    return samples
+
+
+def save_audio(
+    path: str | Path,
+    samples: np.ndarray,
     sample_rate: int = DEFAULT_SAMPLE_RATE,
-    amplitude: float = DEFAULT_AMPLITUDE,
-) -> np.ndarray:
-    frames = [
-        generate_pixel_frame(pixel, pixel_duration, sample_rate, amplitude)
-        for pixel in pixels
-    ]
-
-    if not frames:
-        return np.array([], dtype=np.float32)
-
-    return np.concatenate(frames).astype(np.float32)
-
-
-def save_wav(path: str | Path, samples: np.ndarray, sample_rate: int) -> None:
+) -> None:
+    """
+    Save int16 samples as WAV/FLAC.
+    """
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    clipped = np.clip(samples, -1.0, 1.0)
-    pcm = (clipped * 32767).astype(np.int16)
+    print(f"Writing audio   : {output_path}")
 
-    wavfile.write(output_path, sample_rate, pcm)
+    sf.write(
+        file=output_path,
+        data=samples,
+        samplerate=sample_rate,
+        subtype="PCM_16",
+    )
 
 
 def encode_audio(
     pixels: list[RGBPixel],
     output_path: str | Path,
-    pixel_duration: float = DEFAULT_PIXEL_DURATION,
     sample_rate: int = DEFAULT_SAMPLE_RATE,
-    amplitude: float = DEFAULT_AMPLITUDE,
-) -> None:
-    samples = encode_pixels(
-        pixels=pixels,
-        pixel_duration=pixel_duration,
-        sample_rate=sample_rate,
-        amplitude=amplitude,
+    compression_level: int = DEFAULT_COMPRESSION_LEVEL,
+) -> tuple[int, int]:
+    """
+    Encode RGB pixels into a lossless audio payload.
+
+    Returns:
+        raw_size,
+        compressed_size
+    """
+    print("Starting V3 lossless encode...")
+    print(f"Pixels          : {len(pixels):,}")
+    print(f"Sample rate     : {sample_rate} Hz")
+
+    raw_payload = pixels_to_bytes(pixels)
+
+    compressed_payload = compress_payload(
+        raw_payload,
+        compression_level=compression_level,
     )
 
-    save_wav(output_path, samples, sample_rate)
+    samples = bytes_to_int16_samples(compressed_payload)
+
+    save_audio(
+        path=output_path,
+        samples=samples,
+        sample_rate=sample_rate,
+    )
+
+    print("Audio encode completed.")
+
+    return len(raw_payload), len(compressed_payload)
