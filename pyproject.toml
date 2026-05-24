@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cypher"
-version = "0.5.3"
+version = "1.0.0"
 description = "Universal lossless file-to-audio codec with self-contained FLAC/WAV payloads."
 readme = "README.md"
 requires-python = ">=3.12"
