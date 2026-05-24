@@ -2,7 +2,7 @@
 
 Universal **lossless file ↔ audio codec**.
 
-`cypher` converts **any file type** into self-contained audio (`FLAC` / `WAV`) and restores the original file automatically.
+`cypher` converts **any file type** into self-contained **FLAC / WAV encrypted audio containers** and restores the original payload automatically.
 
 Supported payloads:
 
@@ -14,62 +14,88 @@ Supported payloads:
 - binaries
 - documents
 - arbitrary MIME types
+- multi-file bundles
 
 ---
 
 # Concept
 
-Encode:
+Single file mode:
 
-```txt
+```
 ANY FILE
 ↓
 raw bytes
 ↓
-embedded metadata
+container
+↓
+chunked transport
 ↓
 compression
 ↓
-optional encryption
+encryption
 ↓
 PCM16 payload
+↓
+FLAC / WAV
+```
+
+Bundle mode:
+
+```
+MULTIPLE FILES
+↓
+bundle container
+↓
+chunked transport
+↓
+compression
+↓
+encryption
 ↓
 FLAC / WAV
 ```
 
 Decode:
 
-```txt
+```
 FLAC / WAV
 ↓
 PCM16 payload
 ↓
-optional decryption
+chunk reconstruction
+↓
+Touch ID authentication
+↓
+decryption
 ↓
 decompression
 ↓
-metadata recovery
+container recovery
 ↓
-original file restoration
+original payload restoration
 ```
 
-No external `.json` metadata file.
+No external metadata files.
 
 ---
 
 # Features
 
 - universal file support
-- any MIME type
+- arbitrary MIME types
 - lossless encode / decode
-- FLAC output
-- WAV output
-- embedded metadata
+- FLAC support
+- WAV support
+- embedded containers
 - automatic filename restoration
 - SHA256 integrity verification
-- optional asymmetric encryption
-- inspect command
-- tqdm progress bars
+- asymmetric encryption
+- encrypted metadata mode
+- chunked transport
+- bundle mode
+- inspect mode
+- Touch ID protected private key access
 - self-contained containers
 
 ---
@@ -78,32 +104,38 @@ No external `.json` metadata file.
 
 Create environment:
 
-```bash
-python -m venv .venv
+```
+python-m venv .venv
 source .venv/bin/activate
 ```
 
 Install:
 
-```bash
-pip install -e .
+```
+pip install-e .
 ```
 
 ---
 
 # Project Structure
 
-```txt
+```
 cypher/
 ├── .keys/
+│   ├── cypher_private.pem
+│   └── cypher_public.pem
+│
 ├── data/
 │   ├── input/
 │   ├── audio/
+│   │   └── bundle/
 │   └── output/
+│
 ├── src/
 │   └── cypher/
 │       ├── __init__.py
 │       └── main.py
+│
 ├── Makefile
 ├── pyproject.toml
 └── README.md
@@ -113,129 +145,183 @@ cypher/
 
 # Usage
 
-## Generate keys
+## Generate Keys
 
-Generate an encryption keypair:
+Generate encryption keys:
 
-```bash
+```
 make keygen
 ```
 
-Keys are stored locally:
+Output:
 
-```txt
+```
 .keys/cypher_private.pem
 .keys/cypher_public.pem
 ```
 
-Use force overwrite:
+Force overwrite:
 
-```bash
+```
 make keygen-force
+```
+
+Private key behavior:
+
+```
+private PEM encrypted at rest
+password stored in macOS Keychain
 ```
 
 ---
 
-## Encode
+## Encode — Single File
 
-Put files in:
+Place files inside:
 
-```txt
+```
 data/input/
 ```
 
 Encode:
 
-```bash
+```
 make encode rapport.pdf
 ```
 
-Default output:
+Output:
 
-```txt
-data/audio/rapport.flac
+```
+data/audio/<random>.flac
 ```
 
-WAV mode:
+WAV:
 
-```bash
-make encode rapport.pdf FORMAT=wav
+```
+make encode rapport.pdfFORMAT=wav
 ```
 
-### Automatic encryption
+Automatic encryption activates when:
 
-If:
-
-```txt
+```
 .keys/cypher_public.pem
 ```
 
-exists, encryption is automatically enabled.
+exists.
 
 ---
 
-## Decode
+## Decode — Single File
 
 Decode:
 
-```bash
-make decode rapport.flac
+```
+make decode file.flac
 ```
 
-Automatic restore:
+Output:
 
-```txt
-data/output/rapport.pdf
+```
+data/output/original_file.ext
 ```
 
 Custom output:
 
-```bash
-make decode rapport.flac restored.pdf
+```
+make decode file.flac restored.ext
 ```
 
-### Automatic decryption
+Authentication flow:
 
-If:
-
-```txt
-.keys/cypher_private.pem
+```
+Touch ID popup
+↓
+private key unlock
+↓
+payload decrypt
+↓
+restore file
 ```
 
-exists, decryption is automatically used.
+---
 
-If missing, cypher will request a private key path.
+## Bundle — Multiple Files
+
+Create one encrypted container from multiple files:
+
+```
+make bundle rapport.pdf video.mp4 py.py image.jpg
+```
+
+Output:
+
+```
+data/audio/bundle/<random>.flac
+```
+
+---
+
+## Unbundle
+
+Restore bundled payloads:
+
+```
+make unbundle file.flac
+```
+
+Output:
+
+```
+data/output/bundle/
+```
+
+Example:
+
+```
+data/output/bundle/
+├── rapport.pdf
+├── video.mp4
+├── py.py
+└── image.jpg
+```
+
+Touch ID authentication is required before decryption.
 
 ---
 
 ## Inspect
 
-Inspect an audio payload without decoding:
+Inspect a container without decoding:
 
-```bash
-make inspect rapport.flac
+```
+make inspect file.flac
 ```
 
-Displays:
+Shows:
 
-```txt
-original filename
-mime type
+```
+cypher version
+payload mode
 encryption mode
-payload size
+stored payload size
+```
+
+Encrypted payloads hide:
+
+```
+filename
+mime type
 checksum
-compression backend
+embedded metadata
 ```
 
 ---
 
 # Security
 
-V4.5 supports optional **PGP-like encryption**.
+Encryption backend:
 
-Backend:
-
-```txt
+```
 X25519
 +
 AES-GCM
@@ -243,49 +329,61 @@ AES-GCM
 HKDF-SHA256
 ```
 
-Important:
+Private key protection:
 
-```txt
-KEEP THE PRIVATE KEY SECRET.
+```
+PEM encrypted at rest
++
+macOS Keychain
++
+Touch ID unlock
 ```
 
-Never commit:
+Recommended:
 
-```txt
-.keys/
-*.pem
 ```
-
-Public metadata remains inspectable without decryption:
-
-- original filename
-- mime type
-- payload size
-- checksum
-- encryption mode
-
-Payload content remains encrypted.
+never commit .keys/
+never commit *.pem
+```
 
 ---
 
-# Compression Pipeline
+# Transport Architecture
+
+## Compression
 
 Current backend:
 
-```txt
+```
 zlib
 ```
 
+## Chunked Transport — V4.8
+
+Large payloads are processed chunk-by-chunk.
+
 Pipeline:
 
-```txt
-raw bytes
-→ metadata container
-→ compression
-→ optional encryption
-→ PCM16 samples
-→ FLAC / WAV
 ```
+container
+↓
+split chunks
+↓
+compress
+↓
+encrypt
+↓
+serialize
+↓
+audio transport
+```
+
+Advantages:
+
+- large payload handling
+- reduced RAM pressure
+- scalable transport
+- streaming-style reconstruction
 
 ---
 
@@ -295,7 +393,7 @@ raw bytes
 
 Recommended.
 
-```txt
+```
 lossless
 smaller
 bit-perfect
@@ -305,9 +403,9 @@ bit-perfect
 
 Supported.
 
-```txt
+```
 lossless
-larger files
+larger
 maximum compatibility
 ```
 
@@ -317,47 +415,124 @@ Rejected.
 
 Reason:
 
-```txt
-MP3 is lossy.
-
-Arbitrary binary payloads cannot be restored reliably.
+```
+lossy codec
+not bit-perfect
+unsafe for arbitrary binary recovery
 ```
 
 ---
 
 # CLI
 
-Direct usage:
-
 Encode:
 
-```bash
-python -m cypher.main encode rapport.pdf
+```
+python-m cypher.main encode rapport.pdf
 ```
 
 Decode:
 
-```bash
-python -m cypher.main decode rapport.flac
+```
+python-m cypher.main decode file.flac
+```
+
+Bundle:
+
+```
+python-m cypher.main bundle file1 file2 file3
+```
+
+Unbundle:
+
+```
+python-m cypher.main unbundle bundle.flac
 ```
 
 Inspect:
 
-```bash
-python -m cypher.main inspect rapport.flac
+```
+python-m cypher.main inspect file.flac
 ```
 
-Generate keys:
+Keys:
 
-```bash
-python -m cypher.main keygen
+```
+python-m cypher.main keygen
 ```
 
 Version:
 
-```bash
-python -m cypher.main --version
 ```
+python-m cypher.main--version
+```
+
+---
+
+# Implemented Versions
+
+## V4.6 — Encrypted Metadata Mode
+
+✓ implemented
+
+`inspect` no longer reveals:
+
+- filename
+- MIME type
+- checksum
+- metadata
+
+for encrypted payloads.
+
+---
+
+## V4.7 — Bundle Mode
+
+✓ implemented
+
+```
+1 FLAC
+=
+multiple files
+```
+
+Supported workflows:
+
+```
+make bundle
+make unbundle
+```
+
+---
+
+## V4.8 — Chunked Transport
+
+✓ implemented
+
+Large payload handling:
+
+- chunk splitting
+- per-chunk compression
+- per-chunk encryption
+- scalable reconstruction
+
+---
+
+## V4.9 — Keychain + Touch ID
+
+✓ implemented
+
+Private key protection:
+
+```
+encrypted private PEM
++
+macOS Keychain secret storage
++
+Touch ID authentication
+```
+
+`decode` and `unbundle` require biometric validation before decryption.
 
 ---
 
@@ -365,33 +540,17 @@ python -m cypher.main --version
 
 Potential future directions:
 
+- digital signatures
+- multi-recipient encryption
 - Brotli backend
 - LZMA backend
 - adaptive compression selection
-- chunked streaming mode
-- multi-file bundles
-- encrypted metadata mode
-- digital signatures
 - Reed-Solomon error correction
 - steganographic transport
 - distributed payload splitting
-- robust lossy transport experiments
-- optional password-protected private keys
-- encrypted `.keys` storage
 - payload deduplication
+- encrypted `.keys` storage
 - audio watermarking
-
---
-
-V4.6 → encrypted metadata mode
-OK   (inspect ne révèle plus filename/mime)
-
-V4.7 → bundle mode
-OK      1 FLAC = plusieurs fichiers
-
-V4.8 → chunked transport
-      gros payloads / streaming
-
-V5 → password-protected private keys
-     + signatures
-     + multi-recipient encryption
+- experimental lossy-resilient transport
+- remote / streamed decoding
+- progressive partial recovery

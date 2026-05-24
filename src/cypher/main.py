@@ -6,6 +6,7 @@ import json
 import mimetypes
 import os
 import secrets
+import subprocess
 import zlib
 from dataclasses import asdict, dataclass
 from hashlib import sha256
@@ -19,28 +20,42 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from tqdm import tqdm
 
+import threading
+
+from LocalAuthentication import (
+    LAContext,
+    LAPolicyDeviceOwnerAuthenticationWithBiometrics,
+)
+
 
 PROJECT_NAME = "cypher"
-VERSION = "0.4.7"
+VERSION = "0.4.9"
 
 MAGIC = "CYPHER"
 CONTAINER_MAGIC = b"CYPHER45"
-AUDIO_MAGIC = b"CYPHERAUDIO45"
+AUDIO_MAGIC = b"CYPHERAUDIO49"
 BUNDLE_MAGIC = b"CYPHERBUNDLE47"
+
 HEADER_VERSION = 45
 BUNDLE_VERSION = 47
 
 PAYLOAD_MODE = "ANY_FILE_SELF_CONTAINED_AUDIO"
 BUNDLE_PAYLOAD_MODE = "MULTI_FILE_SELF_CONTAINED_AUDIO"
+STREAMING_PAYLOAD_MODE = "CHUNKED_STREAM"
+
 CHECKSUM_ALGORITHM = "SHA256"
 COMPRESSION_ALGORITHM = "zlib"
 
 CRYPTO_MODE_NONE = "none"
 CRYPTO_MODE_X25519_AESGCM = "x25519-aesgcm"
+CRYPTO_MODE_CHUNKED_X25519_AESGCM = "chunked-x25519-aesgcm"
 
 DEFAULT_SAMPLE_RATE = 44_100
 DEFAULT_AUDIO_FORMAT = "flac"
 DEFAULT_COMPRESSION_LEVEL = 9
+DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024
+DEFAULT_OBFUSCATED_NAME_LENGTH = 24
+PRIVATE_KEY_PASSWORD_BYTES = 32
 
 LOSSLESS_AUDIO_OUTPUT = {".wav", ".flac"}
 UNSAFE_AUDIO_OUTPUT = {".mp3"}
@@ -48,20 +63,20 @@ UNSAFE_AUDIO_OUTPUT = {".mp3"}
 DATA_DIR = Path("data")
 INPUT_DIR = DATA_DIR / "input"
 AUDIO_DIR = DATA_DIR / "audio"
+BUNDLE_AUDIO_DIR = AUDIO_DIR / "bundle"
 OUTPUT_DIR = DATA_DIR / "output"
-KEYS_DIR = Path(".keys")
-DEFAULT_OBFUSCATED_NAME_LENGTH = 24
 
+KEYS_DIR = Path(".keys")
 DEFAULT_PRIVATE_KEY_PATH = KEYS_DIR / "cypher_private.pem"
 DEFAULT_PUBLIC_KEY_PATH = KEYS_DIR / "cypher_public.pem"
+
 DEFAULT_BUNDLE_NAME = "bundle"
 
-DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024
-STREAMING_PAYLOAD_MODE = "CHUNKED_STREAM"
+KEYCHAIN_SERVICE = "cypher"
+KEYCHAIN_PRIVATE_KEY_ACCOUNT = "cypher_private_key_password"
 
-BUNDLE_AUDIO_DIR = AUDIO_DIR / "bundle"
-
-
+TOUCH_ID_DECODE_REASON = "En attente ton empreinte digitale pour déchiffrer le fichier."
+TOUCH_ID_UNBUNDLE_REASON = "En attente ton empreinte digitale pour restaurer le bundle."
 
 
 @dataclass(frozen=True)
@@ -85,6 +100,7 @@ class BundleHeader:
     version: int = BUNDLE_VERSION
     checksum_algorithm: str = CHECKSUM_ALGORITHM
 
+
 @dataclass(frozen=True)
 class ChunkHeader:
     index: int
@@ -94,17 +110,76 @@ class ChunkHeader:
     encrypted: bool
 
 
-def generate_obfuscated_stem(length: int = DEFAULT_OBFUSCATED_NAME_LENGTH) -> str:
-    token = secrets.token_urlsafe(length)
-    return token[:length]
-
-
 def compute_checksum(payload: bytes) -> str:
     return sha256(payload).hexdigest()
 
 
 def verify_checksum(expected: str, actual: str) -> bool:
     return expected.lower() == actual.lower()
+
+
+def generate_obfuscated_stem(length: int = DEFAULT_OBFUSCATED_NAME_LENGTH) -> str:
+    return secrets.token_urlsafe(length)[:length]
+
+
+def generate_private_key_password() -> str:
+    return secrets.token_urlsafe(PRIVATE_KEY_PASSWORD_BYTES)
+
+
+def save_private_key_password_to_keychain(password: str) -> None:
+    subprocess.run(
+        [
+            "security",
+            "add-generic-password",
+            "-U",
+            "-s",
+            KEYCHAIN_SERVICE,
+            "-a",
+            KEYCHAIN_PRIVATE_KEY_ACCOUNT,
+            "-w",
+            password,
+        ],
+        check=True,
+    )
+
+
+def load_private_key_password_from_keychain() -> str | None:
+    result = subprocess.run(
+        [
+            "security",
+            "find-generic-password",
+            "-s",
+            KEYCHAIN_SERVICE,
+            "-a",
+            KEYCHAIN_PRIVATE_KEY_ACCOUNT,
+            "-w",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        return None
+
+    password = result.stdout.strip()
+    return password or None
+
+
+def delete_private_key_password_from_keychain() -> None:
+    subprocess.run(
+        [
+            "security",
+            "delete-generic-password",
+            "-s",
+            KEYCHAIN_SERVICE,
+            "-a",
+            KEYCHAIN_PRIVATE_KEY_ACCOUNT,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
 
 def resolve_input_file(path: str | Path) -> Path:
@@ -206,9 +281,11 @@ def validate_header(header: CypherHeader) -> None:
 
 def encode_header(header: CypherHeader) -> bytes:
     validate_header(header)
-    return json.dumps(asdict(header), sort_keys=True, separators=(",", ":")).encode(
-        "utf-8"
-    )
+    return json.dumps(
+        asdict(header),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
 
 
 def decode_header(payload: bytes) -> CypherHeader:
@@ -220,6 +297,7 @@ def decode_header(payload: bytes) -> CypherHeader:
 def build_container(header: CypherHeader, payload: bytes) -> bytes:
     header_bytes = encode_header(header)
     header_size = len(header_bytes).to_bytes(8, byteorder="big")
+
     return CONTAINER_MAGIC + header_size + header_bytes + payload
 
 
@@ -271,8 +349,8 @@ def build_bundle_container(files: list[tuple[CypherHeader, bytes]]) -> bytes:
 
     bundle_header_bytes = json.dumps(
         asdict(bundle_header),
-        separators=(",", ":"),
         sort_keys=True,
+        separators=(",", ":"),
     ).encode("utf-8")
 
     payload = BUNDLE_MAGIC
@@ -289,6 +367,7 @@ def build_bundle_container(files: list[tuple[CypherHeader, bytes]]) -> bytes:
             )
 
         actual_checksum = compute_checksum(file_payload)
+
         if not verify_checksum(header.checksum, actual_checksum):
             raise ValueError(
                 f"Checksum mismatch before bundling {header.original_name}: "
@@ -296,6 +375,7 @@ def build_bundle_container(files: list[tuple[CypherHeader, bytes]]) -> bytes:
             )
 
         header_bytes = encode_header(header)
+
         payload += len(header_bytes).to_bytes(8, "big")
         payload += header_bytes
         payload += len(file_payload).to_bytes(8, "big")
@@ -323,6 +403,7 @@ def parse_bundle_container(payload: bytes) -> list[tuple[CypherHeader, bytes]]:
         **json.loads(payload[cursor : cursor + bundle_header_size].decode("utf-8"))
     )
     validate_bundle_header(bundle_header)
+
     cursor += bundle_header_size
 
     files: list[tuple[CypherHeader, bytes]] = []
@@ -347,6 +428,7 @@ def parse_bundle_container(payload: bytes) -> list[tuple[CypherHeader, bytes]]:
             )
 
         actual_checksum = compute_checksum(file_payload)
+
         if not verify_checksum(header.checksum, actual_checksum):
             raise ValueError(
                 f"Checksum mismatch for bundled file {header.original_name}: "
@@ -360,58 +442,6 @@ def parse_bundle_container(payload: bytes) -> list[tuple[CypherHeader, bytes]]:
 
     return files
 
-def unbundle_command(args: argparse.Namespace) -> None:
-    audio_path = resolve_input_audio(args.file)
-
-    print("Starting V4.8 chunked bundle restore...")
-
-    _crypto_meta, payload = read_audio_payload(audio_path)
-
-    private_key_path = resolve_default_private_key(args.private_key)
-
-    container = decode_chunked_payload(
-        payload=payload,
-        private_key=private_key_path,
-    )
-
-    header, restored_payload = parse_container(container)
-
-    if header.payload_mode != BUNDLE_PAYLOAD_MODE:
-        raise ValueError("Audio payload is not a bundle")
-
-    actual_checksum = compute_checksum(restored_payload)
-
-    if not verify_checksum(header.checksum, actual_checksum):
-        raise ValueError(
-            "Bundle checksum mismatch: "
-            f"expected {header.checksum}, got {actual_checksum}"
-        )
-
-    files = parse_bundle_container(restored_payload)
-
-    output_dir = resolve_bundle_output_dir(None)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    print()
-    print(f"Bundle files      : {len(files)}")
-    print(f"Output directory  : {output_dir}")
-    print(f"Bundle checksum   : {actual_checksum}")
-
-    for file_header, file_payload in files:
-        output_path = unique_output_path(
-            output_dir,
-            file_header.original_name,
-        )
-
-        write_file(
-            path=output_path,
-            payload=file_payload,
-        )
-
-        print(f"Restored          : {output_path}")
-
-    print()
-    print("Bundle restore completed.")
 
 def generate_keypair(
     private_key_path: Path = DEFAULT_PRIVATE_KEY_PATH,
@@ -419,16 +449,24 @@ def generate_keypair(
     force: bool = False,
 ) -> None:
     if not force:
-        existing = [path for path in [private_key_path, public_key_path] if path.exists()]
+        existing = [
+            path
+            for path in [private_key_path, public_key_path]
+            if path.exists()
+        ]
 
         if existing:
             raise FileExistsError(
                 "Key file already exists. Use --force to overwrite:\n"
                 + "\n".join(str(path) for path in existing)
             )
+    else:
+        delete_private_key_password_from_keychain()
 
     private_key_path.parent.mkdir(parents=True, exist_ok=True)
     public_key_path.parent.mkdir(parents=True, exist_ok=True)
+
+    password = generate_private_key_password()
 
     private_key = x25519.X25519PrivateKey.generate()
     public_key = private_key.public_key()
@@ -436,7 +474,9 @@ def generate_keypair(
     private_bytes = private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
+        encryption_algorithm=serialization.BestAvailableEncryption(
+            password.encode("utf-8")
+        ),
     )
 
     public_bytes = public_key.public_bytes(
@@ -447,11 +487,15 @@ def generate_keypair(
     private_key_path.write_bytes(private_bytes)
     public_key_path.write_bytes(public_bytes)
 
+    save_private_key_password_to_keychain(password)
+
     print("Keypair generated.")
     print(f"Private key: {private_key_path}")
     print(f"Public key : {public_key_path}")
+    print("Password   : stored in macOS Keychain")
     print()
-    print("WARNING: keep the private key secret. Never commit it.")
+    print("Private PEM is encrypted at rest.")
+    print("Touch ID / macOS authentication depends on your Keychain policy.")
 
 
 def load_public_key(path: str | Path) -> x25519.X25519PublicKey:
@@ -462,9 +506,56 @@ def load_public_key(path: str | Path) -> x25519.X25519PublicKey:
 
     return key
 
+def require_touch_id(reason: str) -> None:
+    context = LAContext.alloc().init()
+
+    can_evaluate, error = context.canEvaluatePolicy_error_(
+        LAPolicyDeviceOwnerAuthenticationWithBiometrics,
+        None,
+    )
+
+    if not can_evaluate:
+        raise PermissionError(
+            "Touch ID is not available or no fingerprint is enrolled."
+        )
+
+    done = threading.Event()
+    result = {
+        "success": False,
+        "error": None,
+    }
+
+    def reply(success: bool, auth_error: object) -> None:
+        result["success"] = bool(success)
+        result["error"] = auth_error
+        done.set()
+
+    context.evaluatePolicy_localizedReason_reply_(
+        LAPolicyDeviceOwnerAuthenticationWithBiometrics,
+        reason,
+        reply,
+    )
+
+    done.wait()
+
+    if not result["success"]:
+        raise PermissionError(
+            f"Touch ID authentication failed: {result['error']}"
+        )
 
 def load_private_key(path: str | Path) -> x25519.X25519PrivateKey:
-    key = serialization.load_pem_private_key(Path(path).read_bytes(), password=None)
+    password = load_private_key_password_from_keychain()
+
+    if password is None:
+        raise ValueError(
+            "Private key password not found in macOS Keychain. "
+            "Run make keygen-force or restore the Keychain item."
+        )
+
+    key = serialization.load_pem_private_key(
+        Path(path).read_bytes(),
+        password=password.encode("utf-8"),
+    )
 
     if not isinstance(key, x25519.X25519PrivateKey):
         raise TypeError("Private key must be an X25519 private key")
@@ -477,7 +568,7 @@ def derive_aes_key(shared_secret: bytes, salt: bytes) -> bytes:
         algorithm=hashes.SHA256(),
         length=32,
         salt=salt,
-        info=b"cypher-v4.7-x25519-aesgcm",
+        info=b"cypher-v4.9-x25519-aesgcm",
     ).derive(shared_secret)
 
 
@@ -488,6 +579,7 @@ def encrypt_payload(
     print("Encrypting payload with public key...")
 
     recipient_public_key = load_public_key(recipient_public_key_path)
+
     ephemeral_private_key = x25519.X25519PrivateKey.generate()
     ephemeral_public_key = ephemeral_private_key.public_key()
 
@@ -496,10 +588,16 @@ def encrypt_payload(
     salt = os.urandom(16)
     nonce = os.urandom(12)
 
-    aes_key = derive_aes_key(shared_secret=shared_secret, salt=salt)
-    aesgcm = AESGCM(aes_key)
+    aes_key = derive_aes_key(
+        shared_secret=shared_secret,
+        salt=salt,
+    )
 
-    ciphertext = aesgcm.encrypt(nonce, payload, None)
+    ciphertext = AESGCM(aes_key).encrypt(
+        nonce,
+        payload,
+        None,
+    )
 
     ephemeral_public_bytes = ephemeral_public_key.public_bytes(
         encoding=serialization.Encoding.Raw,
@@ -536,9 +634,17 @@ def decrypt_payload(
     nonce = base64.b64decode(crypto_meta["nonce"])
 
     shared_secret = private_key.exchange(ephemeral_public_key)
-    aes_key = derive_aes_key(shared_secret=shared_secret, salt=salt)
 
-    return AESGCM(aes_key).decrypt(nonce, ciphertext, None)
+    aes_key = derive_aes_key(
+        shared_secret=shared_secret,
+        salt=salt,
+    )
+
+    return AESGCM(aes_key).decrypt(
+        nonce,
+        ciphertext,
+        None,
+    )
 
 
 def build_audio_payload(
@@ -613,7 +719,9 @@ def parse_audio_payload(audio_payload: bytes) -> tuple[dict[str, str], bytes]:
     payload = audio_payload[payload_start:payload_end]
 
     if len(payload) != payload_size:
-        raise ValueError(f"Invalid audio payload size: expected {payload_size}, got {len(payload)}")
+        raise ValueError(
+            f"Invalid audio payload size: expected {payload_size}, got {len(payload)}"
+        )
 
     return meta, payload
 
@@ -635,10 +743,14 @@ def resolve_audio_output(
         raise ValueError(f"Unsupported audio format: {suffix}")
 
     stem = generate_obfuscated_stem() if obfuscate_name else input_path.stem
+
     return AUDIO_DIR / f"{stem}{suffix}"
 
 
-def resolve_decoded_output(output_name: str | None, original_name: str) -> Path:
+def resolve_decoded_output(
+    output_name: str | None,
+    original_name: str,
+) -> Path:
     if output_name is not None:
         output_path = Path(output_name)
 
@@ -653,8 +765,10 @@ def resolve_decoded_output(output_name: str | None, original_name: str) -> Path:
 def resolve_bundle_output_dir(output_name: str | None) -> Path:
     if output_name is not None:
         output_path = Path(output_name)
+
         if output_path.parent != Path("."):
             return output_path
+
         return OUTPUT_DIR / output_name
 
     return OUTPUT_DIR / DEFAULT_BUNDLE_NAME
@@ -671,6 +785,7 @@ def unique_output_path(directory: Path, filename: str) -> Path:
 
     for index in range(1, 10_000):
         deduplicated = directory / f"{stem}_{index}{suffix}"
+
         if not deduplicated.exists():
             return deduplicated
 
@@ -678,8 +793,8 @@ def unique_output_path(directory: Path, filename: str) -> Path:
 
 
 def compress_container(container: bytes, compression_level: int) -> bytes:
-    print("Compressing embedded container...")
-    print(f"Container size    : {len(container):,} bytes")
+    print("Compressing chunk/container...")
+    print(f"Input size        : {len(container):,} bytes")
     print(f"Compression level : {compression_level}")
 
     compressed = zlib.compress(container, level=compression_level)
@@ -692,10 +807,137 @@ def compress_container(container: bytes, compression_level: int) -> bytes:
 
 
 def decompress_container(payload: bytes) -> bytes:
-    print("Decompressing embedded container...")
+    print("Decompressing chunk/container...")
     container = zlib.decompress(payload)
-    print(f"Container bytes   : {len(container):,}")
+    print(f"Output bytes      : {len(container):,}")
     return container
+
+
+def split_chunks(payload: bytes, chunk_size: int) -> list[bytes]:
+    return [
+        payload[index : index + chunk_size]
+        for index in range(0, len(payload), chunk_size)
+    ] or [b""]
+
+
+def encode_chunked_payload(
+    payload: bytes,
+    compression_level: int,
+    public_key: str | None,
+) -> tuple[bytes, str, str | None]:
+    chunks = split_chunks(
+        payload=payload,
+        chunk_size=DEFAULT_CHUNK_SIZE,
+    )
+
+    total_chunks = len(chunks)
+    serialized = b""
+
+    public_key_path = resolve_default_public_key(public_key)
+    crypto_mode = (
+        CRYPTO_MODE_CHUNKED_X25519_AESGCM
+        if public_key_path is not None
+        else CRYPTO_MODE_NONE
+    )
+
+    print(f"Chunk count       : {total_chunks}")
+
+    for index, chunk in enumerate(chunks, start=1):
+        print(f"Chunk {index}/{total_chunks}")
+
+        compressed = compress_container(
+            container=chunk,
+            compression_level=compression_level,
+        )
+
+        if public_key_path is not None:
+            stored_chunk, crypto_meta = encrypt_payload(
+                payload=compressed,
+                recipient_public_key_path=public_key_path,
+            )
+            encrypted = True
+        else:
+            stored_chunk = compressed
+            crypto_meta = {"crypto_mode": CRYPTO_MODE_NONE}
+            encrypted = False
+
+        chunk_header = ChunkHeader(
+            index=index,
+            total_chunks=total_chunks,
+            raw_size=len(chunk),
+            compressed_size=len(stored_chunk),
+            encrypted=encrypted,
+        )
+
+        header_bytes = json.dumps(
+            asdict(chunk_header),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+        crypto_bytes = json.dumps(
+            crypto_meta,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+        serialized += len(header_bytes).to_bytes(8, "big")
+        serialized += header_bytes
+        serialized += len(crypto_bytes).to_bytes(8, "big")
+        serialized += crypto_bytes
+        serialized += len(stored_chunk).to_bytes(8, "big")
+        serialized += stored_chunk
+
+    return serialized, crypto_mode, public_key_path
+
+
+def decode_chunked_payload(payload: bytes, private_key: str | None) -> bytes:
+    cursor = 0
+    rebuilt = b""
+
+    while cursor < len(payload):
+        header_size = int.from_bytes(payload[cursor : cursor + 8], "big")
+        cursor += 8
+
+        header = ChunkHeader(
+            **json.loads(payload[cursor : cursor + header_size].decode("utf-8"))
+        )
+        cursor += header_size
+
+        crypto_size = int.from_bytes(payload[cursor : cursor + 8], "big")
+        cursor += 8
+
+        crypto_meta = json.loads(payload[cursor : cursor + crypto_size].decode("utf-8"))
+        cursor += crypto_size
+
+        chunk_size = int.from_bytes(payload[cursor : cursor + 8], "big")
+        cursor += 8
+
+        stored_chunk = payload[cursor : cursor + chunk_size]
+        cursor += chunk_size
+
+        if header.encrypted:
+            if private_key is None:
+                raise ValueError("Private key path is required for encrypted chunks")
+
+            compressed = decrypt_payload(
+                ciphertext=stored_chunk,
+                crypto_meta=crypto_meta,
+                private_key_path=private_key,
+            )
+        else:
+            compressed = stored_chunk
+
+        chunk = decompress_container(compressed)
+
+        if len(chunk) != header.raw_size:
+            raise ValueError(
+                f"Invalid decoded chunk size: expected {header.raw_size}, got {len(chunk)}"
+            )
+
+        rebuilt += chunk
+
+    return rebuilt
 
 
 def bytes_to_int16_samples(payload: bytes) -> np.ndarray:
@@ -706,7 +948,11 @@ def bytes_to_int16_samples(payload: bytes) -> np.ndarray:
 
     total_samples = len(payload) // 2
 
-    for _ in tqdm(range(total_samples), desc="Packing samples", unit="sample"):
+    for _ in tqdm(
+        range(total_samples),
+        desc="Packing samples",
+        unit="sample",
+    ):
         pass
 
     samples = np.frombuffer(payload, dtype=np.int16).copy()
@@ -719,13 +965,21 @@ def bytes_to_int16_samples(payload: bytes) -> np.ndarray:
 def int16_samples_to_bytes(samples: np.ndarray) -> bytes:
     print("Unpacking PCM16 audio samples into bytes...")
 
-    for _ in tqdm(range(len(samples)), desc="Unpacking samples", unit="sample"):
+    for _ in tqdm(
+        range(len(samples)),
+        desc="Unpacking samples",
+        unit="sample",
+    ):
         pass
 
     return samples.astype(np.int16).tobytes()
 
 
-def write_audio(path: str | Path, samples: np.ndarray, sample_rate: int) -> None:
+def write_audio(
+    path: str | Path,
+    samples: np.ndarray,
+    sample_rate: int,
+) -> None:
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -742,7 +996,10 @@ def write_audio(path: str | Path, samples: np.ndarray, sample_rate: int) -> None
 def read_audio(path: str | Path) -> tuple[int, np.ndarray]:
     print(f"Reading audio     : {path}")
 
-    data, sample_rate = sf.read(path, dtype="int16")
+    data, sample_rate = sf.read(
+        path,
+        dtype="int16",
+    )
 
     if data.ndim > 1:
         raise ValueError("Cypher payload audio must be mono")
@@ -779,14 +1036,6 @@ def resolve_default_private_key(args_private_key: str | None) -> str | None:
     return None
 
 
-def keygen_command(args: argparse.Namespace) -> None:
-    generate_keypair(
-        private_key_path=Path(args.private_key),
-        public_key_path=Path(args.public_key),
-        force=args.force,
-    )
-
-
 def encode_container_to_audio(
     container: bytes,
     header: CypherHeader,
@@ -795,8 +1044,7 @@ def encode_container_to_audio(
     compression_level: int,
     public_key: str | None,
 ) -> None:
-
-    chunked_payload = encode_chunked_payload(
+    chunked_payload, crypto_mode, public_key_path = encode_chunked_payload(
         payload=container,
         compression_level=compression_level,
         public_key=public_key,
@@ -805,14 +1053,10 @@ def encode_container_to_audio(
     audio_payload = build_audio_payload(
         payload=chunked_payload,
         header=header,
-        crypto_meta={
-            "crypto_mode": CRYPTO_MODE_NONE,
-        },
+        crypto_meta={"crypto_mode": crypto_mode},
     )
 
-    samples = bytes_to_int16_samples(
-        audio_payload
-    )
+    samples = bytes_to_int16_samples(audio_payload)
 
     write_audio(
         path=output_path,
@@ -823,12 +1067,22 @@ def encode_container_to_audio(
     print("Encode completed.")
     print(f"Audio             : {output_path}")
     print("Embedded metadata : yes")
-    print("Encryption        : chunked")
+    print(f"Encryption        : {crypto_mode}")
+    print(f"Public key        : {public_key_path or 'none'}")
     print(f"Checksum          : {header.checksum}")
+
+
+def keygen_command(args: argparse.Namespace) -> None:
+    generate_keypair(
+        private_key_path=Path(args.private_key),
+        public_key_path=Path(args.public_key),
+        force=args.force,
+    )
 
 
 def encode_command(args: argparse.Namespace) -> None:
     input_path = resolve_input_file(args.file)
+
     output_path = resolve_audio_output(
         input_path=input_path,
         audio_format=args.format,
@@ -845,9 +1099,12 @@ def encode_command(args: argparse.Namespace) -> None:
         payload_mode=PAYLOAD_MODE,
     )
 
-    container = build_container(header=header, payload=payload)
+    container = build_container(
+        header=header,
+        payload=payload,
+    )
 
-    print("Starting V4.7 self-contained encode...")
+    print("Starting V4.9 self-contained encode...")
     print(f"Input file        : {input_path}")
     print(f"MIME type         : {header.mime_type}")
     print(f"Raw size          : {len(payload):,} bytes")
@@ -864,12 +1121,15 @@ def encode_command(args: argparse.Namespace) -> None:
 
 
 def bundle_command(args: argparse.Namespace) -> None:
-    input_paths = [resolve_input_file(file_arg) for file_arg in args.files]
+    input_paths = [
+        resolve_input_file(file_arg)
+        for file_arg in args.files
+    ]
 
     bundled_files: list[tuple[CypherHeader, bytes]] = []
     total_size = 0
 
-    print("Starting V4.7 multi-file bundle encode...")
+    print("Starting V4.9 multi-file bundle encode...")
     print(f"Files count       : {len(input_paths)}")
 
     for input_path in input_paths:
@@ -885,6 +1145,7 @@ def bundle_command(args: argparse.Namespace) -> None:
         )
 
         bundled_files.append((header, payload))
+
         print(f"- {input_path} ({len(payload):,} bytes, {header.mime_type})")
 
     bundle_container = build_bundle_container(bundled_files)
@@ -912,7 +1173,10 @@ def bundle_command(args: argparse.Namespace) -> None:
     print(f"Bundle size       : {len(bundle_container):,} bytes")
     print(f"Sample rate       : {args.sample_rate} Hz")
 
-    container = build_container(header=bundle_header, payload=bundle_container)
+    container = build_container(
+        header=bundle_header,
+        payload=bundle_container,
+    )
 
     encode_container_to_audio(
         container=container,
@@ -927,11 +1191,13 @@ def bundle_command(args: argparse.Namespace) -> None:
 def decode_command(args: argparse.Namespace) -> None:
     audio_path = resolve_input_audio(args.file)
 
-    print("Starting V4.8 chunked decode...")
+    print("Starting V4.9 chunked decode...")
 
     _crypto_meta, payload = read_audio_payload(audio_path)
 
     private_key_path = resolve_default_private_key(args.private_key)
+
+    require_touch_id(TOUCH_ID_DECODE_REASON)
 
     container = decode_chunked_payload(
         payload=payload,
@@ -948,33 +1214,13 @@ def decode_command(args: argparse.Namespace) -> None:
             f"expected {header.checksum}, got {actual_checksum}"
         )
 
-    if header.payload_mode == BUNDLE_PAYLOAD_MODE or is_bundle_container(
-        restored_payload
-    ):
-        files = parse_bundle_container(restored_payload)
-
-        output_dir = resolve_bundle_output_dir(args.output)
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        print("Decode completed: bundle detected.")
-        print(f"Audio             : {audio_path}")
-        print(f"Output directory  : {output_dir}")
-        print(f"Files count       : {len(files)}")
-        print(f"Bundle checksum   : {actual_checksum}")
-
-        for file_header, file_payload in files:
-            output_path = unique_output_path(
-                output_dir,
-                file_header.original_name,
-            )
-
-            write_file(
-                path=output_path,
-                payload=file_payload,
-            )
-
-            print(f"- restored         : {output_path}")
-
+    if header.payload_mode == BUNDLE_PAYLOAD_MODE or is_bundle_container(restored_payload):
+        restore_bundle_payload(
+            audio_path=audio_path,
+            restored_payload=restored_payload,
+            bundle_checksum=actual_checksum,
+            output_dir=resolve_bundle_output_dir(args.output),
+        )
         return
 
     output_path = resolve_decoded_output(
@@ -993,6 +1239,77 @@ def decode_command(args: argparse.Namespace) -> None:
     print(f"Original name     : {header.original_name}")
     print(f"MIME type         : {header.mime_type}")
     print(f"Checksum          : {actual_checksum}")
+
+
+def restore_bundle_payload(
+    audio_path: Path,
+    restored_payload: bytes,
+    bundle_checksum: str,
+    output_dir: Path,
+) -> None:
+    files = parse_bundle_container(restored_payload)
+
+    output_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    print("Decode completed: bundle detected.")
+    print(f"Audio             : {audio_path}")
+    print(f"Output directory  : {output_dir}")
+    print(f"Files count       : {len(files)}")
+    print(f"Bundle checksum   : {bundle_checksum}")
+
+    for file_header, file_payload in files:
+        output_path = unique_output_path(
+            output_dir,
+            file_header.original_name,
+        )
+
+        write_file(
+            path=output_path,
+            payload=file_payload,
+        )
+
+        print(f"- restored         : {output_path}")
+
+
+def unbundle_command(args: argparse.Namespace) -> None:
+    audio_path = resolve_input_audio(args.file)
+
+    print("Starting V4.9 chunked bundle restore...")
+
+    _crypto_meta, payload = read_audio_payload(audio_path)
+
+    private_key_path = resolve_default_private_key(args.private_key)
+
+    require_touch_id(TOUCH_ID_UNBUNDLE_REASON)
+
+    container = decode_chunked_payload(
+        payload=payload,
+        private_key=private_key_path,
+    )
+
+    header, restored_payload = parse_container(container)
+
+    if header.payload_mode != BUNDLE_PAYLOAD_MODE:
+        raise ValueError("Audio payload is not a bundle")
+
+    actual_checksum = compute_checksum(restored_payload)
+
+    if not verify_checksum(header.checksum, actual_checksum):
+        raise ValueError(
+            "Bundle checksum mismatch: "
+            f"expected {header.checksum}, got {actual_checksum}"
+        )
+
+    restore_bundle_payload(
+        audio_path=audio_path,
+        restored_payload=restored_payload,
+        bundle_checksum=actual_checksum,
+        output_dir=resolve_bundle_output_dir(args.output),
+    )
+
 
 def inspect_command(args: argparse.Namespace) -> None:
     audio_path = resolve_input_audio(args.file)
@@ -1079,7 +1396,10 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
     )
 
-    keygen_parser = subparsers.add_parser("keygen", help="Generate X25519 keypair")
+    keygen_parser = subparsers.add_parser(
+        "keygen",
+        help="Generate X25519 keypair",
+    )
 
     keygen_parser.add_argument(
         "--private-key",
@@ -1098,24 +1418,39 @@ def build_parser() -> argparse.ArgumentParser:
 
     keygen_parser.set_defaults(func=keygen_command)
 
-    encode_parser = subparsers.add_parser("encode", help="Encode one file into audio")
+    encode_parser = subparsers.add_parser(
+        "encode",
+        help="Encode one file into audio",
+    )
+
     encode_parser.add_argument("file")
     add_audio_encode_options(encode_parser)
     encode_parser.set_defaults(func=encode_command)
 
-    bundle_parser = subparsers.add_parser("bundle", help="Encode multiple files into one audio bundle")
+    bundle_parser = subparsers.add_parser(
+        "bundle",
+        help="Encode multiple files into one audio bundle",
+    )
+
     bundle_parser.add_argument("files", nargs="+")
+
     bundle_parser.add_argument(
         "--name",
         default=None,
         help="Bundle output stem when --keep-name is used",
     )
+
     add_audio_encode_options(bundle_parser)
     bundle_parser.set_defaults(func=bundle_command)
 
-    decode_parser = subparsers.add_parser("decode", help="Decode audio back to file or bundle directory")
+    decode_parser = subparsers.add_parser(
+        "decode",
+        help="Decode audio back to file or bundle directory",
+    )
+
     decode_parser.add_argument("file")
     decode_parser.add_argument("output", nargs="?", default=None)
+
     decode_parser.add_argument(
         "--private-key",
         default=None,
@@ -1124,9 +1459,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Defaults to .keys/cypher_private.pem if present."
         ),
     )
-    decode_parser.set_defaults(func=decode_command)
 
-        # ---------- unbundle ----------
+    decode_parser.set_defaults(func=decode_command)
 
     unbundle_parser = subparsers.add_parser(
         "unbundle",
@@ -1139,6 +1473,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     unbundle_parser.add_argument(
+        "output",
+        nargs="?",
+        default=None,
+        help="Optional output directory",
+    )
+
+    unbundle_parser.add_argument(
         "--private-key",
         default=None,
         help=(
@@ -1147,202 +1488,18 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    unbundle_parser.set_defaults(
-        func=unbundle_command
+    unbundle_parser.set_defaults(func=unbundle_command)
+
+    inspect_parser = subparsers.add_parser(
+        "inspect",
+        help="Inspect cypher audio metadata",
     )
 
-    inspect_parser = subparsers.add_parser("inspect", help="Inspect cypher audio metadata")
     inspect_parser.add_argument("file")
     inspect_parser.set_defaults(func=inspect_command)
 
     return parser
 
-def split_chunks(
-    payload: bytes,
-    chunk_size: int,
-) -> list[bytes]:
-
-    return [
-        payload[i:i+chunk_size]
-        for i in range(
-            0,
-            len(payload),
-            chunk_size,
-        )
-    ]
-
-def encode_chunked_payload(
-    payload: bytes,
-    compression_level: int,
-    public_key: str | None,
-) -> bytes:
-
-    chunks = split_chunks(
-        payload,
-        DEFAULT_CHUNK_SIZE,
-    )
-
-    total_chunks = len(chunks)
-
-    serialized = b""
-
-    print(
-        f"Chunk count       : {total_chunks}"
-    )
-
-    for index, chunk in enumerate(
-        chunks,
-        start=1,
-    ):
-
-        print(
-            f"Chunk {index}/{total_chunks}"
-        )
-
-        compressed = compress_container(
-            chunk,
-            compression_level,
-        )
-
-        public_key_path = resolve_default_public_key(
-            public_key
-        )
-
-        if public_key_path:
-
-            encrypted, crypto_meta = encrypt_payload(
-                compressed,
-                public_key_path,
-            )
-
-            encrypted_flag = True
-
-        else:
-
-            encrypted = compressed
-
-            crypto_meta = {
-                "crypto_mode":
-                CRYPTO_MODE_NONE
-            }
-
-            encrypted_flag = False
-
-        chunk_header = ChunkHeader(
-            index=index,
-            total_chunks=total_chunks,
-            raw_size=len(chunk),
-            compressed_size=len(encrypted),
-            encrypted=encrypted_flag,
-        )
-
-        header_bytes = json.dumps(
-            asdict(chunk_header)
-        ).encode()
-
-        crypto_bytes = json.dumps(
-            crypto_meta
-        ).encode()
-
-        serialized += (
-            len(header_bytes)
-            .to_bytes(8,"big")
-        )
-
-        serialized += header_bytes
-
-        serialized += (
-            len(crypto_bytes)
-            .to_bytes(8,"big")
-        )
-
-        serialized += crypto_bytes
-
-        serialized += (
-            len(encrypted)
-            .to_bytes(8,"big")
-        )
-
-        serialized += encrypted
-
-    return serialized
-
-def decode_chunked_payload(
-    payload: bytes,
-    private_key: str | None,
-) -> bytes:
-
-    cursor = 0
-
-    rebuilt = b""
-
-    while cursor < len(payload):
-
-        header_size = int.from_bytes(
-            payload[cursor:cursor+8],
-            "big",
-        )
-
-        cursor += 8
-
-        header = ChunkHeader(
-            **json.loads(
-                payload[
-                    cursor:
-                    cursor+header_size
-                ]
-            )
-        )
-
-        cursor += header_size
-
-        crypto_size = int.from_bytes(
-            payload[cursor:cursor+8],
-            "big",
-        )
-
-        cursor += 8
-
-        crypto_meta = json.loads(
-            payload[
-                cursor:
-                cursor+crypto_size
-            ]
-        )
-
-        cursor += crypto_size
-
-        chunk_size = int.from_bytes(
-            payload[cursor:cursor+8],
-            "big",
-        )
-
-        cursor += 8
-
-        encrypted_chunk = payload[
-            cursor:
-            cursor+chunk_size
-        ]
-
-        cursor += chunk_size
-
-        if header.encrypted:
-
-            decrypted = decrypt_payload(
-                encrypted_chunk,
-                crypto_meta,
-                private_key,
-            )
-
-        else:
-
-            decrypted = encrypted_chunk
-
-        rebuilt += decompress_container(
-            decrypted
-        )
-
-    return rebuilt
 
 def main() -> None:
     parser = build_parser()

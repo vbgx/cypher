@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cypher"
-version = "0.4.4"
+version = "0.4.9"
 description = "Universal lossless file-to-audio codec with self-contained FLAC/WAV payloads."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -46,6 +46,8 @@ dependencies = [
     "soundfile>=0.13",
     "tqdm>=4.66",
     "cryptography>=42",
+    "pyobjc-core>=10.0",
+    "pyobjc-framework-LocalAuthentication>=10.0",
 ]
 
 [project.optional-dependencies]
