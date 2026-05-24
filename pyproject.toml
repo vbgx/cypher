@@ -115,3 +115,13 @@ warn_unused_configs = true
 warn_return_any = true
 warn_unused_ignores = true
 disallow_untyped_defs = true
+
+[tool.coverage.run]
+branch = true
+source = ["cypher"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "if __name__ == .__main__.:",
+    "pragma: no cover",
+]
