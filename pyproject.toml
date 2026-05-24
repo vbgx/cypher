@@ -64,7 +64,7 @@ dev = [
 
 [project.scripts]
 
-cypher = "cypher.main:main"
+cypher = "cypher.cli:main"
 cypher-gui = "cypher.gui:main"
 
 [tool.setuptools]

@@ -975,7 +975,7 @@ class CypherGui(QMainWindow):
             command = [
                 sys.executable,
                 "-m",
-                "cypher.main",
+                "cypher.cli",
                 "encode",
                 str(self.selected_paths[0]),
                 *self.public_key_args(),
@@ -984,7 +984,7 @@ class CypherGui(QMainWindow):
             command = [
                 sys.executable,
                 "-m",
-                "cypher.main",
+                "cypher.cli",
                 "bundle",
                 *[str(path) for path in self.selected_paths],
                 *self.public_key_args(),
@@ -1000,7 +1000,7 @@ class CypherGui(QMainWindow):
         command = [
             sys.executable,
             "-m",
-            "cypher.main",
+            "cypher.cli",
             "inspect",
             str(self.selected_audio),
         ]
@@ -1015,7 +1015,7 @@ class CypherGui(QMainWindow):
         command = [
             sys.executable,
             "-m",
-            "cypher.main",
+            "cypher.cli",
             "decode",
             str(self.selected_audio),
         ]
