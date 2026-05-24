@@ -418,6 +418,10 @@ def inspect_command(args: argparse.Namespace) -> None:
 
 def benchmark_command(args: argparse.Namespace) -> None:
     _sync_runtime_config()
+
+    benchmark_mod.encrypt_payload_multi = encrypt_payload_multi
+    benchmark_mod.resolve_default_public_keys = resolve_default_public_keys
+
     benchmark_mod.benchmark_command(args)
 
 

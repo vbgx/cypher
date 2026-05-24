@@ -138,7 +138,7 @@ def test_bundle_restore_payload_variants(
         bundle_name=None,
     )
 
-    assert (Path("data/output/root/hello.txt")).read_bytes() == file_payload
+    assert (tmp_path / "root" / "hello.txt").read_bytes() == file_payload
 
 
 def test_bundle_restore_rejects_unsafe_path(tmp_path: Path) -> None:
