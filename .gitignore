@@ -111,3 +111,8 @@ temp/
 
 .AppleDouble
 .LSOverride
+
+# Local cryptographic keys
+.keys/
+keys/
+*.pem

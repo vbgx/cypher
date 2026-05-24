@@ -2,15 +2,10 @@
 cypher
 
 Universal self-contained file ↔ audio codec.
-
-Encode any file into lossless audio.
-Decode lossless audio back into the original file.
 """
 
-from cypher.main import VERSION
-
 __title__ = "cypher"
-__version__ = VERSION
+__version__ = "0.4.4"
 
 __all__ = [
     "__title__",
