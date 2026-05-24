@@ -50,6 +50,8 @@ COMPRESSION_ALGORITHM = "zlib"
 CRYPTO_MODE_NONE = "none"
 CRYPTO_MODE_X25519_AESGCM = "x25519-aesgcm"
 CRYPTO_MODE_CHUNKED_X25519_AESGCM = "chunked-x25519-aesgcm"
+CRYPTO_MODE_X25519_AESGCM_MULTI = "x25519-aesgcm-multi"
+CRYPTO_MODE_CHUNKED_X25519_AESGCM_MULTI = "chunked-x25519-aesgcm-multi"
 
 DEFAULT_SAMPLE_RATE = 44_100
 DEFAULT_AUDIO_FORMAT = "flac"
@@ -689,6 +691,135 @@ def decrypt_payload(
     )
 
 
+def encrypt_payload_multi(
+    payload: bytes,
+    recipient_public_key_paths: list[str | Path],
+) -> tuple[bytes, dict[str, object]]:
+    if not recipient_public_key_paths:
+        raise ValueError("At least one public key is required for encryption")
+
+    print("Encrypting payload for multiple recipients...")
+    print(f"Recipients        : {len(recipient_public_key_paths)}")
+
+    content_key = os.urandom(32)
+    payload_nonce = os.urandom(12)
+
+    ciphertext = AESGCM(content_key).encrypt(
+        payload_nonce,
+        payload,
+        None,
+    )
+
+    recipients: list[dict[str, str]] = []
+
+    for public_key_path in recipient_public_key_paths:
+        recipient_public_key = load_public_key(public_key_path)
+
+        ephemeral_private_key = x25519.X25519PrivateKey.generate()
+        ephemeral_public_key = ephemeral_private_key.public_key()
+
+        shared_secret = ephemeral_private_key.exchange(recipient_public_key)
+
+        salt = os.urandom(16)
+        wrap_nonce = os.urandom(12)
+
+        wrapping_key = derive_aes_key(
+            shared_secret=shared_secret,
+            salt=salt,
+        )
+
+        wrapped_key = AESGCM(wrapping_key).encrypt(
+            wrap_nonce,
+            content_key,
+            None,
+        )
+
+        ephemeral_public_bytes = ephemeral_public_key.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+
+        recipients.append(
+            {
+                "ephemeral_public_key": base64.b64encode(
+                    ephemeral_public_bytes
+                ).decode("ascii"),
+                "salt": base64.b64encode(salt).decode("ascii"),
+                "wrap_nonce": base64.b64encode(wrap_nonce).decode("ascii"),
+                "wrapped_key": base64.b64encode(wrapped_key).decode("ascii"),
+            }
+        )
+
+    crypto_meta: dict[str, object] = {
+        "crypto_mode": CRYPTO_MODE_X25519_AESGCM_MULTI,
+        "nonce": base64.b64encode(payload_nonce).decode("ascii"),
+        "ciphertext_size": str(len(ciphertext)),
+        "recipients": recipients,
+    }
+
+    print(f"Ciphertext size   : {len(ciphertext):,} bytes")
+
+    return ciphertext, crypto_meta
+
+
+def decrypt_payload_multi(
+    ciphertext: bytes,
+    crypto_meta: dict[str, object],
+    private_key_path: str | Path,
+) -> bytes:
+    print("Decrypting payload with private key...")
+
+    private_key = load_private_key(private_key_path)
+
+    recipients = crypto_meta.get("recipients")
+
+    if not isinstance(recipients, list):
+        raise ValueError("Invalid multi-recipient metadata")
+
+    payload_nonce_raw = crypto_meta.get("nonce")
+
+    if not isinstance(payload_nonce_raw, str):
+        raise ValueError("Invalid payload nonce")
+
+    payload_nonce = base64.b64decode(payload_nonce_raw)
+
+    for recipient in recipients:
+        if not isinstance(recipient, dict):
+            continue
+
+        try:
+            ephemeral_public_key = x25519.X25519PublicKey.from_public_bytes(
+                base64.b64decode(recipient["ephemeral_public_key"])
+            )
+
+            salt = base64.b64decode(recipient["salt"])
+            wrap_nonce = base64.b64decode(recipient["wrap_nonce"])
+            wrapped_key = base64.b64decode(recipient["wrapped_key"])
+
+            shared_secret = private_key.exchange(ephemeral_public_key)
+
+            wrapping_key = derive_aes_key(
+                shared_secret=shared_secret,
+                salt=salt,
+            )
+
+            content_key = AESGCM(wrapping_key).decrypt(
+                wrap_nonce,
+                wrapped_key,
+                None,
+            )
+
+            return AESGCM(content_key).decrypt(
+                payload_nonce,
+                ciphertext,
+                None,
+            )
+        except Exception:
+            continue
+
+    raise ValueError("No matching private key found for this encrypted payload")
+
+
 def build_audio_payload(
     payload: bytes,
     header: CypherHeader,
@@ -872,7 +1003,7 @@ def split_chunks(payload: bytes, chunk_size: int) -> list[bytes]:
 def encode_chunked_payload(
     payload: bytes,
     compression_level: int,
-    public_key: str | None,
+    public_key: list[str] | None,
 ) -> tuple[bytes, str, str | None]:
     chunks = split_chunks(
         payload=payload,
@@ -882,10 +1013,10 @@ def encode_chunked_payload(
     total_chunks = len(chunks)
     serialized = b""
 
-    public_key_path = resolve_default_public_key(public_key)
+    public_key_paths = resolve_default_public_keys(public_key)
     crypto_mode = (
-        CRYPTO_MODE_CHUNKED_X25519_AESGCM
-        if public_key_path is not None
+        CRYPTO_MODE_CHUNKED_X25519_AESGCM_MULTI
+        if public_key_paths
         else CRYPTO_MODE_NONE
     )
 
@@ -910,10 +1041,10 @@ def encode_chunked_payload(
             compression_level=compression_level,
         )
 
-        if public_key_path is not None:
-            stored_chunk, crypto_meta = encrypt_payload(
+        if public_key_paths:
+            stored_chunk, crypto_meta = encrypt_payload_multi(
                 payload=compressed,
-                recipient_public_key_path=public_key_path,
+                recipient_public_key_paths=public_key_paths,
             )
             encrypted = True
         else:
@@ -948,7 +1079,8 @@ def encode_chunked_payload(
         serialized += len(stored_chunk).to_bytes(8, "big")
         serialized += stored_chunk
 
-    return serialized, crypto_mode, public_key_path
+    public_key_summary = ", ".join(public_key_paths) if public_key_paths else None
+    return serialized, crypto_mode, public_key_summary
 
 def decode_chunked_payload(payload: bytes, private_key: str | None) -> bytes:
     cursor = 0
@@ -979,11 +1111,20 @@ def decode_chunked_payload(payload: bytes, private_key: str | None) -> bytes:
             if private_key is None:
                 raise ValueError("Private key path is required for encrypted chunks")
 
-            compressed = decrypt_payload(
-                ciphertext=stored_chunk,
-                crypto_meta=crypto_meta,
-                private_key_path=private_key,
-            )
+            crypto_mode = crypto_meta.get("crypto_mode")
+
+            if crypto_mode == CRYPTO_MODE_X25519_AESGCM_MULTI:
+                compressed = decrypt_payload_multi(
+                    ciphertext=stored_chunk,
+                    crypto_meta=crypto_meta,
+                    private_key_path=private_key,
+                )
+            else:
+                compressed = decrypt_payload(
+                    ciphertext=stored_chunk,
+                    crypto_meta=crypto_meta,
+                    private_key_path=private_key,
+                )
         else:
             compressed = stored_chunk
 
@@ -1152,6 +1293,16 @@ def resolve_default_public_key(args_public_key: str | None) -> str | None:
     return None
 
 
+def resolve_default_public_keys(args_public_keys: list[str] | None) -> list[str]:
+    if args_public_keys:
+        return args_public_keys
+
+    if DEFAULT_PUBLIC_KEY_PATH.exists():
+        return [str(DEFAULT_PUBLIC_KEY_PATH)]
+
+    return []
+
+
 def resolve_default_private_key(args_private_key: str | None) -> str | None:
     if args_private_key is not None:
         return args_private_key
@@ -1249,16 +1400,16 @@ def benchmark_command(args: argparse.Namespace) -> None:
     compressed = zlib.compress(container, level=args.compression_level)
     t_compress = time.perf_counter() - t0
 
-    public_key_path = resolve_default_public_key(args.public_key)
+    public_key_paths = resolve_default_public_keys(args.public_key)
 
-    if public_key_path is not None:
+    if public_key_paths:
         t0 = time.perf_counter()
-        encrypted, _crypto_meta = encrypt_payload(
+        encrypted, _crypto_meta = encrypt_payload_multi(
             payload=compressed,
-            recipient_public_key_path=public_key_path,
+            recipient_public_key_paths=public_key_paths,
         )
         t_crypto = time.perf_counter() - t0
-        crypto_mode = CRYPTO_MODE_X25519_AESGCM
+        crypto_mode = CRYPTO_MODE_X25519_AESGCM_MULTI
         crypto_size = len(encrypted)
     else:
         t_crypto = 0.0
@@ -1682,9 +1833,11 @@ def add_audio_encode_options(command_parser: argparse.ArgumentParser) -> None:
 
     command_parser.add_argument(
         "--public-key",
+        action="append",
         default=None,
         help=(
-            "Encrypt using this public key. "
+            "Encrypt for this recipient public key. "
+            "Can be passed multiple times. "
             "Defaults to .keys/cypher_public.pem if present."
         ),
     )
@@ -1748,7 +1901,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_COMPRESSION_LEVEL,
     )
-    benchmark_parser.add_argument("--public-key", default=None)
+    benchmark_parser.add_argument("--public-key", action="append", default=None)
     benchmark_parser.set_defaults(func=benchmark_command)
 
     bundle_parser = subparsers.add_parser(

@@ -360,6 +360,7 @@ class CypherGui(QMainWindow):
 
         self.selected_paths: list[Path] = []
         self.selected_audio: Path | None = None
+        self.selected_public_keys: list[Path] = []
         self.worker: CommandWorker | None = None
         self.has_real_progress = False
         self.last_artifact: Path | None = None
@@ -370,6 +371,8 @@ class CypherGui(QMainWindow):
         self.files_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
 
         self.audio_label = QLabel("NO AUDIO SELECTED")
+        self.public_keys_list = QListWidget()
+        self.public_keys_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.logs = QTextEdit()
         self.logs.setReadOnly(True)
 
@@ -405,6 +408,9 @@ class CypherGui(QMainWindow):
         self.metric_crypto = QLabel("CRYPTO: AUTO")
         self.metric_crypto.setObjectName("Metric")
 
+        self.metric_recipients = QLabel("RECIPIENTS: auto")
+        self.metric_recipients.setObjectName("Metric")
+
         self.artifact_label = QLabel("ARTIFACT: none")
         self.artifact_label.setObjectName("Artifact")
 
@@ -437,6 +443,15 @@ class CypherGui(QMainWindow):
         encode_button = QPushButton("⚡ ENCODE / BUNDLE")
         encode_button.clicked.connect(self.encode_or_bundle)
 
+        select_public_keys_button = QPushButton("＋ RECIPIENT KEYS")
+        select_public_keys_button.clicked.connect(self.select_public_keys)
+
+        remove_public_keys_button = QPushButton("－ REMOVE KEYS")
+        remove_public_keys_button.clicked.connect(self.remove_selected_public_keys)
+
+        clear_public_keys_button = QPushButton("⌫ CLEAR KEYS")
+        clear_public_keys_button.clicked.connect(self.clear_public_keys)
+
         select_audio_button = QPushButton("◎ SELECT AUDIO")
         select_audio_button.clicked.connect(self.select_audio)
 
@@ -455,6 +470,11 @@ class CypherGui(QMainWindow):
         top_buttons.addWidget(remove_button)
         top_buttons.addWidget(clear_button)
         top_buttons.addWidget(encode_button)
+
+        recipient_buttons = QHBoxLayout()
+        recipient_buttons.addWidget(select_public_keys_button)
+        recipient_buttons.addWidget(remove_public_keys_button)
+        recipient_buttons.addWidget(clear_public_keys_button)
 
         audio_buttons = QHBoxLayout()
         audio_buttons.addWidget(select_audio_button)
@@ -480,6 +500,7 @@ class CypherGui(QMainWindow):
         dashboard.addWidget(self.metric_size)
         dashboard.addWidget(self.metric_mode)
         dashboard.addWidget(self.metric_crypto)
+        dashboard.addWidget(self.metric_recipients)
 
         input_panel = QFrame()
         input_panel.setObjectName("Panel")
@@ -488,6 +509,14 @@ class CypherGui(QMainWindow):
         input_layout.addLayout(top_buttons)
         input_layout.addWidget(self.files_list)
         input_panel.setLayout(input_layout)
+
+        recipients_panel = QFrame()
+        recipients_panel.setObjectName("Panel")
+        recipients_layout = QVBoxLayout()
+        recipients_layout.addWidget(QLabel("▌ RECIPIENT PUBLIC KEYS // MULTI-RECIPIENT ENCRYPTION"))
+        recipients_layout.addLayout(recipient_buttons)
+        recipients_layout.addWidget(self.public_keys_list)
+        recipients_panel.setLayout(recipients_layout)
 
         audio_panel = QFrame()
         audio_panel.setObjectName("Panel")
@@ -520,6 +549,7 @@ class CypherGui(QMainWindow):
         layout.addLayout(header_layout)
         layout.addLayout(dashboard)
         layout.addWidget(input_panel)
+        layout.addWidget(recipients_panel)
         layout.addWidget(audio_panel)
         layout.addWidget(telemetry_panel)
         layout.addWidget(logs_panel)
@@ -699,8 +729,16 @@ class CypherGui(QMainWindow):
 
         self.metric_items.setText(f"ITEMS: {items}")
         self.metric_size.setText(f"SIZE: {format_size(total_size)}")
+        recipients = len(self.selected_public_keys)
+
         self.metric_mode.setText(f"MODE: {mode}")
-        self.metric_crypto.setText("CRYPTO: AUTO")
+
+        if recipients:
+            self.metric_crypto.setText("CRYPTO: MULTI-RECIPIENT")
+            self.metric_recipients.setText(f"RECIPIENTS: {recipients}")
+        else:
+            self.metric_crypto.setText("CRYPTO: AUTO")
+            self.metric_recipients.setText("RECIPIENTS: auto")
 
     def update_progress(self, value: int, phase: str, eta: str) -> None:
         if not self.has_real_progress:
@@ -766,6 +804,8 @@ class CypherGui(QMainWindow):
         self.last_artifact = None
 
         self.files_list.clear()
+        self.public_keys_list.clear()
+        self.selected_public_keys.clear()
         self.audio_label.setText("NO AUDIO SELECTED")
         self.logs.clear()
         self.progress_bar.setRange(0, 100)
@@ -784,6 +824,57 @@ class CypherGui(QMainWindow):
             "CHECKSUM       --"
         )
         self.update_dashboard()
+
+    def select_public_keys(self) -> None:
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select recipient public keys",
+            ".keys",
+            "PEM public keys (*.pem);;All files (*)",
+        )
+
+        for file_name in files:
+            path = Path(file_name).resolve()
+
+            if path not in self.selected_public_keys:
+                self.selected_public_keys.append(path)
+                self.public_keys_list.addItem(str(path))
+
+        self.status_label.setText(
+            f"{len(self.selected_public_keys)} recipient key(s) selected"
+        )
+        self.update_dashboard()
+
+    def remove_selected_public_keys(self) -> None:
+        selected_items = self.public_keys_list.selectedItems()
+
+        for item in selected_items:
+            path = Path(item.text())
+
+            if path in self.selected_public_keys:
+                self.selected_public_keys.remove(path)
+
+            row = self.public_keys_list.row(item)
+            self.public_keys_list.takeItem(row)
+
+        self.status_label.setText(
+            f"{len(self.selected_public_keys)} recipient key(s) selected"
+        )
+        self.update_dashboard()
+
+    def clear_public_keys(self) -> None:
+        self.selected_public_keys.clear()
+        self.public_keys_list.clear()
+        self.status_label.setText("Recipient keys cleared")
+        self.update_dashboard()
+
+    def public_key_args(self) -> list[str]:
+        args: list[str] = []
+
+        for public_key in self.selected_public_keys:
+            args.extend(["--public-key", str(public_key)])
+
+        return args
 
     def select_audio(self) -> None:
         file_name, _ = QFileDialog.getOpenFileName(
@@ -870,6 +961,7 @@ class CypherGui(QMainWindow):
                 "cypher.main",
                 "encode",
                 str(self.selected_paths[0]),
+                *self.public_key_args(),
             ]
         else:
             command = [
@@ -878,6 +970,7 @@ class CypherGui(QMainWindow):
                 "cypher.main",
                 "bundle",
                 *[str(path) for path in self.selected_paths],
+                *self.public_key_args(),
             ]
 
         self.run_command(command)
