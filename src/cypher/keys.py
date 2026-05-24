@@ -6,7 +6,7 @@ import subprocess
 import threading
 from pathlib import Path
 
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import x25519
 from LocalAuthentication import (
     LAContext,
@@ -168,7 +168,9 @@ def load_private_key(
     if password is None:
         raise ValueError(
             "Private key password not found in macOS Keychain. "
-            "Run make keygen-force or restore the Keychain item."
+            "The encrypted private PEM exists, but Cypher cannot unlock it. "
+            "Run `cypher keygen --force` to create a new local keypair, "
+            "or restore the missing Keychain item."
         )
 
     key = serialization.load_pem_private_key(
@@ -196,8 +198,9 @@ def require_touch_id(reason: str) -> None:
 
     if not can_evaluate:
         raise PermissionError(
-            "Touch ID is not available "
-            "or no fingerprint is enrolled."
+            "Touch ID is not available or no fingerprint is enrolled. "
+            "On macOS, enable Touch ID for this user or adjust Keychain access. "
+            f"System detail: {error}"
         )
 
     done = threading.Event()
@@ -225,9 +228,37 @@ def require_touch_id(reason: str) -> None:
 
     if not bool(result["success"]):
         raise PermissionError(
-            "Touch ID authentication failed: "
-            f"{result['error']}"
+            "Touch ID authentication failed or was cancelled. "
+            "The private key was not unlocked. "
+            f"System detail: {result['error']}"
         )
+
+
+
+def public_key_fingerprint(path: str | Path) -> str:
+    public_key = load_public_key(path)
+    raw = public_key.public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    digest = hashes.Hash(hashes.SHA256())
+    digest.update(raw)
+    fingerprint = digest.finalize().hex()
+    return ":".join(
+        fingerprint[index : index + 2]
+        for index in range(0, len(fingerprint), 2)
+    )
+
+
+def key_info_command(args: argparse.Namespace) -> None:
+    key_path = Path(args.file)
+    fingerprint = public_key_fingerprint(key_path)
+
+    print("Cypher public key")
+    print("-----------------")
+    print(f"File        : {key_path}")
+    print("Type        : X25519 public key")
+    print(f"Fingerprint : {fingerprint}")
 
 
 def keygen_command(

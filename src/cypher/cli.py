@@ -9,10 +9,11 @@ from cypher.audio import (
 )
 from cypher.benchmark import benchmark_command
 from cypher.bundle import bundle_command, unbundle_command
-from cypher.inspect import inspect_command
+from cypher.inspect import inspect_command, recipients_command
 from cypher.keys import (
     DEFAULT_PRIVATE_KEY_PATH,
     DEFAULT_PUBLIC_KEY_PATH,
+    key_info_command,
     keygen_command,
 )
 from cypher.container import decode_command, encode_command
@@ -60,6 +61,15 @@ def add_audio_encode_options(command_parser: argparse.ArgumentParser) -> None:
         ),
     )
 
+    command_parser.add_argument(
+        "--no-encrypt",
+        action="store_true",
+        help=(
+            "Disable encryption explicitly. "
+            "Use this when you want a public, non-encrypted audio payload."
+        ),
+    )
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -96,6 +106,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     keygen_parser.set_defaults(func=keygen_command)
 
+    key_info_parser = subparsers.add_parser(
+        "key-info",
+        help="Show public key fingerprint",
+    )
+    key_info_parser.add_argument("file")
+    key_info_parser.set_defaults(func=key_info_command)
+
     encode_parser = subparsers.add_parser(
         "encode",
         help="Encode one file into audio",
@@ -118,6 +135,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--public-key",
         action="append",
         default=None,
+    )
+    benchmark_parser.add_argument(
+        "--no-encrypt",
+        action="store_true",
     )
     benchmark_parser.set_defaults(func=benchmark_command)
 
@@ -181,12 +202,30 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("file")
     inspect_parser.set_defaults(func=inspect_command)
 
+    recipients_parser = subparsers.add_parser(
+        "recipients",
+        help="Show encrypted payload recipient slots",
+    )
+    recipients_parser.add_argument("file")
+    recipients_parser.set_defaults(func=recipients_command)
     return parser
-
 
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+
+    if (
+        not getattr(args, "no_encrypt", False)
+        and getattr(args, "public_key", None) is None
+        and DEFAULT_PUBLIC_KEY_PATH.exists()
+    ):
+        print(
+            "Warning: using default public key automatically: "
+            f"{DEFAULT_PUBLIC_KEY_PATH}. "
+            "Pass --public-key explicitly, or pass --no-encrypt to disable encryption."
+        )
+        args.public_key = [str(DEFAULT_PUBLIC_KEY_PATH)]
+
     args.func(args)
 
 

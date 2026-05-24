@@ -71,7 +71,6 @@ def _sync_runtime_config() -> None:
     container_mod.resolve_decoded_output = resolve_decoded_output
     container_mod.resolve_bundle_output_dir = resolve_bundle_output_dir
     container_mod.resolve_default_public_key = resolve_default_public_key
-    container_mod.resolve_default_public_keys = resolve_default_public_keys
     container_mod.resolve_default_private_key = resolve_default_private_key
 
     bundle_mod.resolve_input_file = resolve_input_file
@@ -180,9 +179,36 @@ def resolve_default_public_key(args_public_key: str | None) -> str | None:
     return None
 
 
-def resolve_default_public_keys(args_public_keys) -> list[str]:
+def resolve_default_public_keys(
+    args_public_keys,
+    no_encrypt: bool = False,
+) -> list[str]:
+    if no_encrypt:
+        return []
+
     if args_public_keys:
         return list(args_public_keys)
+
+    if DEFAULT_PUBLIC_KEY_PATH.exists():
+        print(
+            "Warning: using default public key automatically: "
+            f"{DEFAULT_PUBLIC_KEY_PATH}. "
+            "Pass --public-key explicitly, or pass --no-encrypt to disable encryption."
+        )
+        return [str(DEFAULT_PUBLIC_KEY_PATH)]
+
+    return []
+
+    if args_public_keys:
+        return list(args_public_keys)
+
+    if DEFAULT_PUBLIC_KEY_PATH.exists():
+        print(
+            "Warning: using default public key automatically: "
+            f"{DEFAULT_PUBLIC_KEY_PATH}. "
+            "Pass --public-key explicitly, or pass --no-encrypt to disable encryption."
+        )
+        return [str(DEFAULT_PUBLIC_KEY_PATH)]
 
     return []
 
@@ -258,7 +284,9 @@ def load_private_key(path: str | Path) -> x25519.X25519PrivateKey:
     if password is None:
         raise ValueError(
             "Private key password not found in macOS Keychain. "
-            "Run make keygen-force or restore the Keychain item."
+            "The encrypted private PEM exists, but Cypher cannot unlock it. "
+            "Run `cypher keygen --force` to create a new local keypair, "
+            "or restore the missing Keychain item."
         )
 
     key = serialization.load_pem_private_key(
@@ -282,7 +310,9 @@ def require_touch_id(reason: str) -> None:
 
     if not can_evaluate:
         raise PermissionError(
-            "Touch ID is not available or no fingerprint is enrolled."
+            "Touch ID is not available or no fingerprint is enrolled. "
+            "On macOS, enable Touch ID for this user or adjust Keychain access. "
+            f"System detail: {error}"
         )
 
     done = threading.Event()
@@ -306,7 +336,9 @@ def require_touch_id(reason: str) -> None:
 
     if not bool(result["success"]):
         raise PermissionError(
-            f"Touch ID authentication failed: {result['error']}"
+            "Touch ID authentication failed or was cancelled. "
+            "The private key was not unlocked. "
+            f"System detail: {result['error']}"
         )
 
 
@@ -425,6 +457,17 @@ def benchmark_command(args: argparse.Namespace) -> None:
     benchmark_mod.benchmark_command(args)
 
 
+
+def key_info_command(args: argparse.Namespace) -> None:
+    _sync_runtime_config()
+    keys_mod.key_info_command(args)
+
+
+def recipients_command(args: argparse.Namespace) -> None:
+    _sync_runtime_config()
+    inspect_mod.recipients_command(args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     _sync_runtime_config()
     parser = cli_mod.build_parser()
@@ -449,6 +492,10 @@ def build_parser() -> argparse.ArgumentParser:
                     subparser.set_defaults(func=unbundle_command)
                 elif func is inspect_mod.inspect_command:
                     subparser.set_defaults(func=inspect_command)
+                elif func is keys_mod.key_info_command:
+                    subparser.set_defaults(func=key_info_command)
+                elif func is inspect_mod.recipients_command:
+                    subparser.set_defaults(func=recipients_command)
 
     return parser
 

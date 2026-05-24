@@ -76,11 +76,14 @@ def benchmark_command(
         time.perf_counter() - t0
     )
 
-    public_key_paths = (
-        resolve_default_public_keys(
-            args.public_key
+    if getattr(args, "no_encrypt", False):
+        public_key_paths = []
+    else:
+        public_key_paths = (
+            resolve_default_public_keys(
+                args.public_key
+            )
         )
-    )
 
     if public_key_paths:
         t0 = time.perf_counter()

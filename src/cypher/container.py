@@ -321,13 +321,10 @@ def resolve_bundle_output_dir(
 
 
 def resolve_default_public_keys(
-    args_public_keys: Sequence[str] | None,
+    args_public_keys,
 ) -> list[str]:
     if args_public_keys:
         return list(args_public_keys)
-
-    if DEFAULT_PUBLIC_KEY_PATH.exists():
-        return [str(DEFAULT_PUBLIC_KEY_PATH)]
 
     return []
 
@@ -597,7 +594,7 @@ def encode_command(args: argparse.Namespace) -> None:
         output_path=output_path,
         sample_rate=args.sample_rate,
         compression_level=args.compression_level,
-        public_key=args.public_key,
+        public_key=[] if getattr(args, "no_encrypt", False) else args.public_key,
     )
 
 

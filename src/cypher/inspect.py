@@ -65,3 +65,46 @@ def inspect_command(args: argparse.Namespace) -> None:
         )
 
     print(f"Stored payload : {len(payload):,} bytes")
+
+
+def recipients_command(args: argparse.Namespace) -> None:
+    audio_path = resolve_input_audio(args.file)
+
+    print("Inspecting cypher recipients...")
+
+    crypto_meta, _payload = read_audio_payload(audio_path)
+    crypto_mode = crypto_meta.get("crypto_mode", CRYPTO_MODE_NONE)
+
+    print()
+    print("Cypher recipients")
+    print("-----------------")
+    print(f"Audio file  : {audio_path}")
+    print(f"Encryption  : {crypto_mode}")
+
+    if crypto_mode == CRYPTO_MODE_NONE:
+        print("Recipients  : none")
+        print("Status      : payload is not encrypted")
+        return
+
+    recipients = crypto_meta.get("recipients")
+
+    if not isinstance(recipients, list):
+        print("Recipients  : unknown")
+        print("Status      : encrypted metadata has no recipient list")
+        return
+
+    print(f"Recipients  : {len(recipients)}")
+
+    for index, recipient in enumerate(recipients, start=1):
+        if not isinstance(recipient, dict):
+            print(f"- recipient {index}: invalid metadata")
+            continue
+
+        wrapped_key = recipient.get("wrapped_key", "")
+        ephemeral = recipient.get("ephemeral_public_key", "")
+
+        print(
+            f"- recipient {index}: "
+            f"wrapped_key={len(str(wrapped_key))} chars, "
+            f"ephemeral_public_key={len(str(ephemeral))} chars"
+        )
