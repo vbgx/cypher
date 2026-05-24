@@ -7,6 +7,7 @@ import zlib
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 from pathlib import Path
+import secrets
 
 import numpy as np
 import soundfile as sf
@@ -44,6 +45,7 @@ INPUT_DIR = DATA_DIR / "input"
 AUDIO_DIR = DATA_DIR / "audio"
 OUTPUT_DIR = DATA_DIR / "output"
 KEYS_DIR = Path(".keys")
+DEFAULT_OBFUSCATED_NAME_LENGTH = 24
 
 DEFAULT_PRIVATE_KEY_PATH = KEYS_DIR / "cypher_private.pem"
 DEFAULT_PUBLIC_KEY_PATH = KEYS_DIR / "cypher_public.pem"
@@ -62,6 +64,9 @@ class CypherHeader:
     checksum_algorithm: str = CHECKSUM_ALGORITHM
     compression_algorithm: str = COMPRESSION_ALGORITHM
 
+def generate_obfuscated_stem(length: int = DEFAULT_OBFUSCATED_NAME_LENGTH) -> str:
+    token = secrets.token_urlsafe(length)
+    return token[:length]
 
 def compute_checksum(payload: bytes) -> str:
     return sha256(payload).hexdigest()
@@ -403,7 +408,11 @@ def parse_audio_payload(audio_payload: bytes) -> tuple[dict[str, str], bytes]:
     return meta, payload
 
 
-def resolve_audio_output(input_path: Path, audio_format: str) -> Path:
+def resolve_audio_output(
+    input_path: Path,
+    audio_format: str,
+    obfuscate_name: bool = True,
+) -> Path:
     suffix = audio_format if audio_format.startswith(".") else f".{audio_format}"
 
     if suffix in UNSAFE_AUDIO_OUTPUT:
@@ -415,7 +424,12 @@ def resolve_audio_output(input_path: Path, audio_format: str) -> Path:
     if suffix not in LOSSLESS_AUDIO_OUTPUT:
         raise ValueError(f"Unsupported audio format: {suffix}")
 
-    return AUDIO_DIR / f"{input_path.stem}{suffix}"
+    if obfuscate_name:
+        stem = generate_obfuscated_stem()
+    else:
+        stem = input_path.stem
+
+    return AUDIO_DIR / f"{stem}{suffix}"
 
 
 def resolve_decoded_output(output_name: str | None, original_name: str) -> Path:
@@ -542,7 +556,11 @@ def keygen_command(args: argparse.Namespace) -> None:
 
 def encode_command(args: argparse.Namespace) -> None:
     input_path = resolve_input_file(args.file)
-    output_path = resolve_audio_output(input_path, args.format)
+    output_path = resolve_audio_output(
+    input_path=input_path,
+    audio_format=args.format,
+    obfuscate_name=not args.keep_name,
+)
 
     payload = read_file(input_path)
     checksum = compute_checksum(payload)
@@ -689,22 +707,59 @@ def build_parser() -> argparse.ArgumentParser:
         version=f"{PROJECT_NAME} {VERSION}",
     )
 
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(
+        dest="command",
+        required=True,
+    )
+
+    # ---------- keygen ----------
 
     keygen_parser = subparsers.add_parser("keygen")
-    keygen_parser.add_argument("--private-key", default=str(DEFAULT_PRIVATE_KEY_PATH))
-    keygen_parser.add_argument("--public-key", default=str(DEFAULT_PUBLIC_KEY_PATH))
-    keygen_parser.add_argument("--force", action="store_true")
+
+    keygen_parser.add_argument(
+        "--private-key",
+        default=str(DEFAULT_PRIVATE_KEY_PATH),
+    )
+
+    keygen_parser.add_argument(
+        "--public-key",
+        default=str(DEFAULT_PUBLIC_KEY_PATH),
+    )
+
+    keygen_parser.add_argument(
+        "--force",
+        action="store_true",
+    )
+
     keygen_parser.set_defaults(func=keygen_command)
 
+    # ---------- encode ----------
+
     encode_parser = subparsers.add_parser("encode")
-    encode_parser.add_argument("file")
+
+    encode_parser.add_argument(
+        "file",
+    )
+
     encode_parser.add_argument(
         "--format",
         default=DEFAULT_AUDIO_FORMAT,
-        choices=["wav", "flac", "mp3"],
+        choices=["wav", "flac"],
+        help="Output audio format",
     )
-    encode_parser.add_argument("--sample-rate", type=int, default=DEFAULT_SAMPLE_RATE)
+
+    encode_parser.add_argument(
+        "--keep-name",
+        action="store_true",
+        help="Keep original filename stem instead of generating an obfuscated name",
+    )
+
+    encode_parser.add_argument(
+        "--sample-rate",
+        type=int,
+        default=DEFAULT_SAMPLE_RATE,
+    )
+
     encode_parser.add_argument(
         "--compression-level",
         type=int,
@@ -712,25 +767,51 @@ def build_parser() -> argparse.ArgumentParser:
         choices=range(0, 10),
         metavar="[0-9]",
     )
+
     encode_parser.add_argument(
         "--public-key",
         default=None,
-        help="Encrypt with this public key. Defaults to .keys/cypher_public.pem if present.",
+        help=(
+            "Encrypt using this public key. "
+            "Defaults to .keys/cypher_public.pem if present."
+        ),
     )
+
     encode_parser.set_defaults(func=encode_command)
 
+    # ---------- decode ----------
+
     decode_parser = subparsers.add_parser("decode")
-    decode_parser.add_argument("file")
-    decode_parser.add_argument("output", nargs="?", default=None)
+
+    decode_parser.add_argument(
+        "file",
+    )
+
+    decode_parser.add_argument(
+        "output",
+        nargs="?",
+        default=None,
+    )
+
     decode_parser.add_argument(
         "--private-key",
         default=None,
-        help="Decrypt with this private key. Defaults to .keys/cypher_private.pem if present.",
+        help=(
+            "Decrypt using this private key. "
+            "Defaults to .keys/cypher_private.pem if present."
+        ),
     )
+
     decode_parser.set_defaults(func=decode_command)
 
+    # ---------- inspect ----------
+
     inspect_parser = subparsers.add_parser("inspect")
-    inspect_parser.add_argument("file")
+
+    inspect_parser.add_argument(
+        "file",
+    )
+
     inspect_parser.set_defaults(func=inspect_command)
 
     return parser
