@@ -58,6 +58,8 @@ dev = [
     "pytest-cov>=6.1",
     "ruff>=0.11",
     "mypy>=1.15",
+    "pyinstaller>=6.13",
+    "cairosvg>=2.7",
 ]
 
 [project.scripts]

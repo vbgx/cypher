@@ -408,6 +408,17 @@ class CypherGui(QMainWindow):
         self.artifact_label = QLabel("ARTIFACT: none")
         self.artifact_label.setObjectName("Artifact")
 
+        self.preview_label = QLabel(
+            "PAYLOAD        none\n"
+            "TYPE           --\n"
+            "FILES          --\n"
+            "SIZE           --\n"
+            "CHUNKS         --\n"
+            "CRYPTO         --\n"
+            "CHECKSUM       --"
+        )
+        self.preview_label.setObjectName("Artifact")
+
         self.open_artifact_button = QPushButton("OPEN OUTPUT FOLDER")
         self.open_artifact_button.clicked.connect(self.open_artifact_folder)
 
@@ -493,6 +504,8 @@ class CypherGui(QMainWindow):
         telemetry_layout.addWidget(self.progress_bar)
         telemetry_layout.addLayout(progress_info)
         telemetry_layout.addWidget(self.artifact_label)
+        telemetry_layout.addWidget(QLabel("▌ ARTIFACT PREVIEW"))
+        telemetry_layout.addWidget(self.preview_label)
         telemetry_layout.addWidget(self.open_artifact_button)
         telemetry_panel.setLayout(telemetry_layout)
 
@@ -578,14 +591,75 @@ class CypherGui(QMainWindow):
         )
 
     def capture_artifact_from_log(self, line: str) -> None:
-        match = re.search(r"Audio\s+:\s+(.+)", line)
+        audio_match = re.search(r"Audio\s+:\s+(.+)", line)
 
-        if not match:
+        if audio_match:
+            candidate = Path(audio_match.group(1).strip())
+            self.last_artifact = candidate
+            self.artifact_label.setText(f"ARTIFACT: {candidate}")
+            self.update_artifact_preview(payload=str(candidate))
             return
 
-        candidate = Path(match.group(1).strip())
-        self.last_artifact = candidate
-        self.artifact_label.setText(f"ARTIFACT: {candidate}")
+        self.update_artifact_preview_from_log(line)
+
+    def update_artifact_preview(self, **updates: str) -> None:
+        current = {
+            "PAYLOAD": "none",
+            "TYPE": "--",
+            "FILES": "--",
+            "SIZE": "--",
+            "CHUNKS": "--",
+            "CRYPTO": "--",
+            "CHECKSUM": "--",
+        }
+
+        for raw_line in self.preview_label.text().splitlines():
+            parts = raw_line.split(None, 1)
+            if len(parts) == 2 and parts[0] in current:
+                current[parts[0]] = parts[1].strip()
+
+        mapping = {
+            "payload": "PAYLOAD",
+            "type": "TYPE",
+            "files": "FILES",
+            "size": "SIZE",
+            "chunks": "CHUNKS",
+            "crypto": "CRYPTO",
+            "checksum": "CHECKSUM",
+        }
+
+        for key, value in updates.items():
+            target = mapping.get(key)
+            if target:
+                current[target] = value
+
+        self.preview_label.setText(
+            f"PAYLOAD        {current['PAYLOAD']}\n"
+            f"TYPE           {current['TYPE']}\n"
+            f"FILES          {current['FILES']}\n"
+            f"SIZE           {current['SIZE']}\n"
+            f"CHUNKS         {current['CHUNKS']}\n"
+            f"CRYPTO         {current['CRYPTO']}\n"
+            f"CHECKSUM       {current['CHECKSUM']}"
+        )
+
+    def update_artifact_preview_from_log(self, line: str) -> None:
+        stripped = line.strip()
+
+        patterns = [
+            (r"Payload mode\s+:\s+(.+)", "type"),
+            (r"Files count\s+:\s+(.+)", "files"),
+            (r"Raw size\s+:\s+(.+)", "size"),
+            (r"Chunk count\s+:\s+(.+)", "chunks"),
+            (r"Encryption\s+:\s+(.+)", "crypto"),
+            (r"Checksum\s+:\s+(.+)", "checksum"),
+        ]
+
+        for pattern, field in patterns:
+            match = re.search(pattern, stripped)
+            if match:
+                self.update_artifact_preview(**{field: match.group(1).strip()})
+                return
 
     def open_artifact_folder(self) -> None:
         if self.last_artifact is None:
@@ -700,6 +774,15 @@ class CypherGui(QMainWindow):
         self.phase_label.setText("PHASE: IDLE")
         self.eta_label.setText("ETA: --")
         self.artifact_label.setText("ARTIFACT: none")
+        self.preview_label.setText(
+            "PAYLOAD        none\n"
+            "TYPE           --\n"
+            "FILES          --\n"
+            "SIZE           --\n"
+            "CHUNKS         --\n"
+            "CRYPTO         --\n"
+            "CHECKSUM       --"
+        )
         self.update_dashboard()
 
     def select_audio(self) -> None:

@@ -126,3 +126,9 @@ data/output/*
 !data/input/.gitkeep
 !data/audio/.gitkeep
 !data/output/.gitkeep
+
+# Local helper scripts
+.scripts/
+
+# Generated project snapshot
+project_state.txt

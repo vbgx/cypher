@@ -7,6 +7,7 @@ import mimetypes
 import os
 import secrets
 import subprocess
+import time
 import zlib
 from dataclasses import asdict, dataclass
 from hashlib import sha256
@@ -65,6 +66,7 @@ INPUT_DIR = DATA_DIR / "input"
 AUDIO_DIR = DATA_DIR / "audio"
 BUNDLE_AUDIO_DIR = AUDIO_DIR / "bundle"
 OUTPUT_DIR = DATA_DIR / "output"
+WAVEFORM_DIR = OUTPUT_DIR / "waveforms"
 
 KEYS_DIR = Path(".keys")
 DEFAULT_PRIVATE_KEY_PATH = KEYS_DIR / "cypher_private.pem"
@@ -1074,6 +1076,49 @@ def write_audio(
     )
 
 
+def write_waveform_preview(
+    audio_path: str | Path,
+    samples: np.ndarray,
+    width: int = 1200,
+    height: int = 320,
+) -> Path:
+    output_path = WAVEFORM_DIR / f"{Path(audio_path).stem}.pgm"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if samples.size == 0:
+        raise ValueError("Cannot render waveform preview for empty audio.")
+
+    mono = samples.astype(np.float32)
+    peak = float(np.max(np.abs(mono))) or 1.0
+    mono = mono / peak
+
+    bucket_count = min(width, max(1, mono.size))
+    buckets = np.array_split(mono, bucket_count)
+
+    pixels = np.full((height, bucket_count), 255, dtype=np.uint8)
+    center = height // 2
+
+    for x, bucket in enumerate(buckets):
+        if bucket.size == 0:
+            continue
+
+        low = int(center + float(np.min(bucket)) * (height // 2 - 8))
+        high = int(center + float(np.max(bucket)) * (height // 2 - 8))
+
+        y1 = max(0, min(height - 1, min(low, high)))
+        y2 = max(0, min(height - 1, max(low, high)))
+
+        pixels[y1 : y2 + 1, x] = 0
+        pixels[center, x] = 80
+
+    with output_path.open("wb") as file:
+        file.write(f"P5\n{bucket_count} {height}\n255\n".encode("ascii"))
+        file.write(pixels.tobytes())
+
+    print(f"Waveform preview  : {output_path}")
+    return output_path
+
+
 def read_audio(path: str | Path) -> tuple[int, np.ndarray]:
     print(f"Reading audio     : {path}")
 
@@ -1149,6 +1194,11 @@ def encode_container_to_audio(
         sample_rate=sample_rate,
     )
 
+    write_waveform_preview(
+        audio_path=output_path,
+        samples=samples,
+    )
+
     print("Encode completed.")
     print(f"Audio             : {output_path}")
     print("Embedded metadata : yes")
@@ -1167,6 +1217,86 @@ def keygen_command(args: argparse.Namespace) -> None:
         public_key_path=Path(args.public_key),
         force=args.force,
     )
+
+
+def benchmark_command(args: argparse.Namespace) -> None:
+    input_path = resolve_input_file(args.file)
+    payload = read_file(input_path)
+
+    print("Cypher benchmark")
+    print("================")
+    print(f"Input file        : {input_path}")
+    print(f"Raw size          : {len(payload):,} bytes")
+    print(f"Compression level : {args.compression_level}")
+    print()
+
+    t0 = time.perf_counter()
+    checksum = compute_checksum(payload)
+    t_checksum = time.perf_counter() - t0
+
+    header = create_header(
+        input_path=input_path,
+        raw_size=len(payload),
+        checksum=checksum,
+        payload_mode=PAYLOAD_MODE,
+    )
+
+    t0 = time.perf_counter()
+    container = build_container(header=header, payload=payload)
+    t_container = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
+    compressed = zlib.compress(container, level=args.compression_level)
+    t_compress = time.perf_counter() - t0
+
+    public_key_path = resolve_default_public_key(args.public_key)
+
+    if public_key_path is not None:
+        t0 = time.perf_counter()
+        encrypted, _crypto_meta = encrypt_payload(
+            payload=compressed,
+            recipient_public_key_path=public_key_path,
+        )
+        t_crypto = time.perf_counter() - t0
+        crypto_mode = CRYPTO_MODE_X25519_AESGCM
+        crypto_size = len(encrypted)
+    else:
+        t_crypto = 0.0
+        crypto_mode = CRYPTO_MODE_NONE
+        crypto_size = len(compressed)
+
+    t0 = time.perf_counter()
+    samples = bytes_to_int16_samples(crypto_size.to_bytes(8, "big") + compressed)
+    t_audio = time.perf_counter() - t0
+
+    total = t_checksum + t_container + t_compress + t_crypto + t_audio
+    mb = len(payload) / 1024 / 1024
+    throughput = mb / total if total > 0 else 0.0
+
+    ratio = len(compressed) / max(len(container), 1)
+    chunk_count = len(split_chunks(container, DEFAULT_CHUNK_SIZE))
+
+    print()
+    print("Results")
+    print("-------")
+    print(f"Container size    : {len(container):,} bytes")
+    print(f"Compressed size   : {len(compressed):,} bytes")
+    print(f"Compression ratio : {ratio:.2%}")
+    print(f"Chunks            : {chunk_count}")
+    print(f"Crypto            : {crypto_mode}")
+    print(f"Crypto size       : {crypto_size:,} bytes")
+    print(f"Audio samples     : {len(samples):,}")
+    print(f"Throughput        : {throughput:.2f} MB/s")
+    print()
+
+    print("Timings")
+    print("-------")
+    print(f"Checksum          : {t_checksum:.4f}s")
+    print(f"Container build   : {t_container:.4f}s")
+    print(f"Compression       : {t_compress:.4f}s")
+    print(f"Crypto            : {t_crypto:.4f}s")
+    print(f"Audio generation  : {t_audio:.4f}s")
+    print(f"Total             : {total:.4f}s")
 
 
 def encode_command(args: argparse.Namespace) -> None:
@@ -1607,6 +1737,19 @@ def build_parser() -> argparse.ArgumentParser:
     encode_parser.add_argument("file")
     add_audio_encode_options(encode_parser)
     encode_parser.set_defaults(func=encode_command)
+
+    benchmark_parser = subparsers.add_parser(
+        "benchmark",
+        help="Benchmark compression, crypto and audio payload generation",
+    )
+    benchmark_parser.add_argument("file")
+    benchmark_parser.add_argument(
+        "--compression-level",
+        type=int,
+        default=DEFAULT_COMPRESSION_LEVEL,
+    )
+    benchmark_parser.add_argument("--public-key", default=None)
+    benchmark_parser.set_defaults(func=benchmark_command)
 
     bundle_parser = subparsers.add_parser(
         "bundle",

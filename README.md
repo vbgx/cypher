@@ -1,4 +1,4 @@
-# cypher
+<p align="center">\n  <img src="assets/banner.png" alt="Cypher banner" width="100%">\n</p>\n\n# cypher
 
 Universal **lossless file ↔ audio codec**.
 
