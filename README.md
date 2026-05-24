@@ -534,6 +534,32 @@ multiple files
 
 ---
 
+## V5.2 → live progress + ETA + improved GUI workflows
+- real-time GUI progress tracking
+- progress protocol between CLI and GUI
+- phase-aware progress reporting
+- weighted multi-phase progression
+- live percentage updates
+- chunk / audio / scan progress parsing
+- dynamic ETA refinement during execution
+- indeterminate preparation state
+- command cancellation support
+- improved long-running bundle UX
+- better handling of large repositories / folders
+- integrated GUI progress visualization
+
+GUI improvements:
+
+- encode starts immediately
+- preparation phase shown explicitly
+- automatic transition to real progress mode
+- live phase display
+- live ETA display
+- better responsiveness for large datasets
+- improved subprocess log streaming
+
+---
+
 # Future Directions
 
 Potential next steps:

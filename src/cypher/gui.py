@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Qt, Signal
@@ -23,10 +24,19 @@ from PySide6.QtWidgets import (
 
 AUDIO_SUFFIXES = {".flac", ".wav"}
 
+PHASE_WEIGHTS = {
+    "scan": (0, 10),
+    "read": (10, 30),
+    "files": (30, 45),
+    "container": (45, 50),
+    "chunks": (50, 85),
+    "audio": (85, 100),
+}
+
 
 class CommandWorker(QThread):
     output = Signal(str)
-    progress = Signal(int)
+    progress = Signal(int, str, str)
     finished_ok = Signal(int)
 
     def __init__(self, command: list[str]) -> None:
@@ -34,14 +44,16 @@ class CommandWorker(QThread):
         self.command = command
         self.process: subprocess.Popen[str] | None = None
         self.cancel_requested = False
+        self.started_at = 0.0
+        self.first_progress_seen = False
 
     def cancel(self) -> None:
         self.cancel_requested = True
-
         if self.process is not None and self.process.poll() is None:
             self.process.terminate()
 
     def run(self) -> None:
+        self.started_at = time.time()
         self.output.emit(f"$ {' '.join(self.command)}\n\n")
 
         self.process = subprocess.Popen(
@@ -68,21 +80,73 @@ class CommandWorker(QThread):
         self.finished_ok.emit(code)
 
     def parse_progress(self, line: str) -> None:
+        match = re.search(
+            r"PROGRESS\s+phase=([a-zA-Z0-9_-]+)\s+current=(\d+)\s+total=(\d+)",
+            line.strip(),
+        )
+
+        if match:
+            phase = match.group(1)
+            current = int(match.group(2))
+            total = int(match.group(3))
+
+            percent = self.weighted_percent(
+                phase=phase,
+                current=current,
+                total=total,
+            )
+
+            eta = self.compute_eta(percent)
+
+            self.progress.emit(
+                percent,
+                f"{phase} {current:,}/{total:,}",
+                eta,
+            )
+            return
+
         chunk_match = re.search(r"Chunk\s+(\d+)/(\d+)", line)
 
         if chunk_match:
             current = int(chunk_match.group(1))
             total = int(chunk_match.group(2))
-
-            if total:
-                self.progress.emit(int(current / total * 100))
-
+            percent = self.weighted_percent("chunks", current, total)
+            eta = self.compute_eta(percent)
+            self.progress.emit(percent, f"chunks {current}/{total}", eta)
             return
 
         tqdm_match = re.search(r"(Packing|Unpacking) samples:\s+(\d+)%", line)
 
         if tqdm_match:
-            self.progress.emit(int(tqdm_match.group(2)))
+            current = int(tqdm_match.group(2))
+            percent = self.weighted_percent("audio", current, 100)
+            eta = self.compute_eta(percent)
+            self.progress.emit(percent, f"audio {current}/100", eta)
+
+    def weighted_percent(self, phase: str, current: int, total: int) -> int:
+        start, end = PHASE_WEIGHTS.get(phase, (0, 100))
+
+        if total <= 0:
+            return start
+
+        ratio = max(0.0, min(1.0, current / total))
+        return int(start + ratio * (end - start))
+
+    def compute_eta(self, percent: int) -> str:
+        if percent <= 0:
+            return "ETA: calculating..."
+
+        elapsed = time.time() - self.started_at
+        estimated_total = elapsed / (percent / 100)
+        remaining = max(0.0, estimated_total - elapsed)
+
+        minutes = int(remaining // 60)
+        seconds = int(remaining % 60)
+
+        if minutes:
+            return f"ETA: {minutes}m {seconds}s"
+
+        return f"ETA: {seconds}s"
 
 
 class DropListWidget(QListWidget):
@@ -97,14 +161,12 @@ class DropListWidget(QListWidget):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
             return
-
         super().dragEnterEvent(event)
 
     def dragMoveEvent(self, event: QDragEnterEvent) -> None:
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
             return
-
         super().dragMoveEvent(event)
 
     def dropEvent(self, event: QDropEvent) -> None:
@@ -144,12 +206,7 @@ class AudioDropLabel(QLabel):
             return
 
         for url in event.mimeData().urls():
-            if not url.isLocalFile():
-                continue
-
-            path = Path(url.toLocalFile())
-
-            if path.suffix.lower() in AUDIO_SUFFIXES:
+            if url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() in AUDIO_SUFFIXES:
                 event.acceptProposedAction()
                 return
 
@@ -176,6 +233,7 @@ class CypherGui(QMainWindow):
         self.selected_paths: list[Path] = []
         self.selected_audio: Path | None = None
         self.worker: CommandWorker | None = None
+        self.has_real_progress = False
 
         self.files_list = DropListWidget()
         self.files_list.paths_dropped.connect(self.add_paths)
@@ -191,6 +249,8 @@ class CypherGui(QMainWindow):
         self.progress_bar.setValue(0)
 
         self.status_label = QLabel("Ready")
+        self.phase_label = QLabel("Phase: idle")
+        self.eta_label = QLabel("ETA: -")
 
         select_files_button = QPushButton("Select files")
         select_files_button.clicked.connect(self.select_files)
@@ -232,6 +292,11 @@ class CypherGui(QMainWindow):
         audio_buttons.addWidget(restore_button)
         audio_buttons.addWidget(cancel_button)
 
+        progress_info = QHBoxLayout()
+        progress_info.addWidget(self.status_label)
+        progress_info.addWidget(self.phase_label)
+        progress_info.addWidget(self.eta_label)
+
         layout = QVBoxLayout()
         layout.addWidget(QLabel("Files / folders to encode or bundle"))
         layout.addLayout(top_buttons)
@@ -241,7 +306,7 @@ class CypherGui(QMainWindow):
         layout.addWidget(self.audio_label)
         layout.addWidget(QLabel("Progress"))
         layout.addWidget(self.progress_bar)
-        layout.addWidget(self.status_label)
+        layout.addLayout(progress_info)
         layout.addWidget(QLabel("Logs"))
         layout.addWidget(self.logs)
 
@@ -254,8 +319,16 @@ class CypherGui(QMainWindow):
         self.logs.insertPlainText(text)
         self.logs.moveCursor(self.logs.textCursor().MoveOperation.End)
 
-    def set_progress(self, value: int) -> None:
-        self.progress_bar.setValue(max(0, min(100, value)))
+    def update_progress(self, value: int, phase: str, eta: str) -> None:
+        if not self.has_real_progress:
+            self.has_real_progress = True
+            self.progress_bar.setRange(0, 100)
+
+        value = max(0, min(100, value))
+        self.progress_bar.setValue(value)
+        self.status_label.setText(f"Running... {value}%")
+        self.phase_label.setText(f"Phase: {phase}")
+        self.eta_label.setText(eta)
 
     def select_files(self) -> None:
         files, _ = QFileDialog.getOpenFileNames(
@@ -263,7 +336,6 @@ class CypherGui(QMainWindow):
             "Select files",
             "data/input",
         )
-
         self.add_paths([Path(file_name) for file_name in files])
 
     def select_folder(self) -> None:
@@ -285,6 +357,8 @@ class CypherGui(QMainWindow):
                 self.files_list.addItem(str(path))
 
         self.status_label.setText(f"{len(self.selected_paths)} item(s) selected")
+        self.phase_label.setText("Phase: idle")
+        self.eta_label.setText("ETA: -")
 
     def remove_selected(self) -> None:
         selected_items = self.files_list.selectedItems()
@@ -303,12 +377,16 @@ class CypherGui(QMainWindow):
     def clear_selection(self) -> None:
         self.selected_paths.clear()
         self.selected_audio = None
+        self.has_real_progress = False
 
         self.files_list.clear()
         self.audio_label.setText("Drop FLAC / WAV here or select one")
         self.logs.clear()
+        self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.status_label.setText("Ready")
+        self.phase_label.setText("Phase: idle")
+        self.eta_label.setText("ETA: -")
 
     def select_audio(self) -> None:
         file_name, _ = QFileDialog.getOpenFileName(
@@ -331,27 +409,38 @@ class CypherGui(QMainWindow):
         self.selected_audio = path
         self.audio_label.setText(str(path))
         self.status_label.setText("Audio selected")
+        self.phase_label.setText("Phase: idle")
+        self.eta_label.setText("ETA: -")
 
     def run_command(self, command: list[str]) -> None:
         if self.worker is not None and self.worker.isRunning():
             self.log("\nA command is already running.\n")
             return
 
-        self.progress_bar.setValue(0)
-        self.status_label.setText("Running...")
+        self.has_real_progress = False
+        self.progress_bar.setRange(0, 0)
+        self.status_label.setText("Preparing and encoding...")
+        self.phase_label.setText("Phase: starting")
+        self.eta_label.setText("ETA: refining...")
 
         self.worker = CommandWorker(command)
         self.worker.output.connect(self.log)
-        self.worker.progress.connect(self.set_progress)
+        self.worker.progress.connect(self.update_progress)
         self.worker.finished_ok.connect(self.command_finished)
         self.worker.start()
 
     def command_finished(self, code: int) -> None:
+        self.progress_bar.setRange(0, 100)
+
         if code == 0:
             self.progress_bar.setValue(100)
-            self.status_label.setText("Done")
+            self.status_label.setText("Done 100%")
+            self.phase_label.setText("Phase: completed")
+            self.eta_label.setText("ETA: 0s")
         else:
             self.status_label.setText(f"Failed with exit code {code}")
+            self.phase_label.setText("Phase: failed")
+            self.eta_label.setText("ETA: -")
 
         self.log(f"\nCommand finished with exit code {code}\n")
 
@@ -362,6 +451,8 @@ class CypherGui(QMainWindow):
 
         self.worker.cancel()
         self.status_label.setText("Cancelling...")
+        self.phase_label.setText("Phase: cancelling")
+        self.eta_label.setText("ETA: -")
         self.log("\nCancellation requested.\n")
 
     def encode_or_bundle(self) -> None:

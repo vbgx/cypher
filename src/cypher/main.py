@@ -29,15 +29,15 @@ from LocalAuthentication import (
 
 
 PROJECT_NAME = "cypher"
-VERSION = "0.4.9"
+VERSION = "0.5.2"
 
 MAGIC = "CYPHER"
 CONTAINER_MAGIC = b"CYPHER45"
 AUDIO_MAGIC = b"CYPHERAUDIO49"
 BUNDLE_MAGIC = b"CYPHERBUNDLE47"
 
-HEADER_VERSION = 45
-BUNDLE_VERSION = 47
+HEADER_VERSION = 52
+BUNDLE_VERSION = 52
 
 PAYLOAD_MODE = "ANY_FILE_SELF_CONTAINED_AUDIO"
 BUNDLE_PAYLOAD_MODE = "MULTI_FILE_SELF_CONTAINED_AUDIO"
@@ -117,6 +117,17 @@ def compute_checksum(payload: bytes) -> str:
 
 def verify_checksum(expected: str, actual: str) -> bool:
     return expected.lower() == actual.lower()
+
+
+def emit_progress(
+    phase: str,
+    current: int,
+    total: int,
+) -> None:
+    print(
+        f"PROGRESS phase={phase} current={current} total={total}",
+        flush=True,
+    )
 
 
 def generate_obfuscated_stem(length: int = DEFAULT_OBFUSCATED_NAME_LENGTH) -> str:
@@ -361,6 +372,7 @@ def validate_bundle_header(header: BundleHeader) -> None:
         raise ValueError("Bundle must contain at least one file")
 
 
+
 def build_bundle_container(files: list[tuple[CypherHeader, bytes]]) -> bytes:
     if not files:
         raise ValueError("Bundle requires at least one file")
@@ -378,7 +390,15 @@ def build_bundle_container(files: list[tuple[CypherHeader, bytes]]) -> bytes:
     payload += len(bundle_header_bytes).to_bytes(8, "big")
     payload += bundle_header_bytes
 
-    for header, file_payload in files:
+    total_files = len(files)
+
+    for index, (header, file_payload) in enumerate(files, start=1):
+        emit_progress(
+            phase="files",
+            current=index,
+            total=total_files,
+        )
+
         validate_header(header)
 
         if len(file_payload) != header.raw_size:
@@ -403,7 +423,6 @@ def build_bundle_container(files: list[tuple[CypherHeader, bytes]]) -> bytes:
         payload += file_payload
 
     return payload
-
 
 def is_bundle_container(payload: bytes) -> bool:
     return payload.startswith(BUNDLE_MAGIC)
@@ -847,6 +866,7 @@ def split_chunks(payload: bytes, chunk_size: int) -> list[bytes]:
     ] or [b""]
 
 
+
 def encode_chunked_payload(
     payload: bytes,
     compression_level: int,
@@ -869,7 +889,18 @@ def encode_chunked_payload(
 
     print(f"Chunk count       : {total_chunks}")
 
+    processed_chunk_bytes = 0
+    total_chunk_bytes = len(payload)
+
     for index, chunk in enumerate(chunks, start=1):
+        processed_chunk_bytes += len(chunk)
+
+        emit_progress(
+            phase="chunks",
+            current=processed_chunk_bytes,
+            total=total_chunk_bytes,
+        )
+
         print(f"Chunk {index}/{total_chunks}")
 
         compressed = compress_container(
@@ -916,7 +947,6 @@ def encode_chunked_payload(
         serialized += stored_chunk
 
     return serialized, crypto_mode, public_key_path
-
 
 def decode_chunked_payload(payload: bytes, private_key: str | None) -> bytes:
     cursor = 0
@@ -967,6 +997,7 @@ def decode_chunked_payload(payload: bytes, private_key: str | None) -> bytes:
     return rebuilt
 
 
+
 def bytes_to_int16_samples(payload: bytes) -> np.ndarray:
     print("Packing bytes into PCM16 audio samples...")
 
@@ -974,6 +1005,12 @@ def bytes_to_int16_samples(payload: bytes) -> np.ndarray:
         payload += b"\x00"
 
     total_samples = len(payload) // 2
+
+    emit_progress(
+        phase="audio",
+        current=0,
+        total=100,
+    )
 
     for _ in tqdm(
         range(total_samples),
@@ -984,6 +1021,12 @@ def bytes_to_int16_samples(payload: bytes) -> np.ndarray:
 
     samples = np.frombuffer(payload, dtype=np.int16).copy()
 
+    emit_progress(
+        phase="audio",
+        current=100,
+        total=100,
+    )
+
     print(f"Audio samples     : {len(samples):,}")
 
     return samples
@@ -992,6 +1035,12 @@ def bytes_to_int16_samples(payload: bytes) -> np.ndarray:
 def int16_samples_to_bytes(samples: np.ndarray) -> bytes:
     print("Unpacking PCM16 audio samples into bytes...")
 
+    emit_progress(
+        phase="audio",
+        current=0,
+        total=100,
+    )
+
     for _ in tqdm(
         range(len(samples)),
         desc="Unpacking samples",
@@ -999,8 +1048,13 @@ def int16_samples_to_bytes(samples: np.ndarray) -> bytes:
     ):
         pass
 
-    return samples.astype(np.int16).tobytes()
+    emit_progress(
+        phase="audio",
+        current=100,
+        total=100,
+    )
 
+    return samples.astype(np.int16).tobytes()
 
 def write_audio(
     path: str | Path,
@@ -1156,8 +1210,9 @@ def encode_command(args: argparse.Namespace) -> None:
 
 
 
+
 def bundle_command(args: argparse.Namespace) -> None:
-    print("Starting V5.1 multi-file bundle encode...")
+    print("Starting multi-file bundle encode...")
 
     raw_inputs = [
         Path(file_arg)
@@ -1213,8 +1268,15 @@ def bundle_command(args: argparse.Namespace) -> None:
 
     bundle_entries: list[tuple[CypherHeader, bytes]] = []
     total_size = 0
+    total_files = len(input_paths)
 
-    for input_path in input_paths:
+    for index, input_path in enumerate(input_paths, start=1):
+        emit_progress(
+            phase="scan",
+            current=index,
+            total=total_files,
+        )
+
         payload = read_file(input_path)
         checksum = compute_checksum(payload)
 
@@ -1243,7 +1305,19 @@ def bundle_command(args: argparse.Namespace) -> None:
 
     print(f"Total raw size    : {total_size:,} bytes")
 
+    emit_progress(
+        phase="container",
+        current=0,
+        total=1,
+    )
+
     bundle_payload = build_bundle_container(bundle_entries)
+
+    emit_progress(
+        phase="container",
+        current=1,
+        total=1,
+    )
 
     bundle_name = args.name or bundle_root_name or DEFAULT_BUNDLE_NAME
 
@@ -1280,7 +1354,6 @@ def bundle_command(args: argparse.Namespace) -> None:
         compression_level=args.compression_level,
         public_key=args.public_key,
     )
-
 
 def decode_command(args: argparse.Namespace) -> None:
     audio_path = resolve_input_audio(args.file)
