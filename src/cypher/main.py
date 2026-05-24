@@ -7,8 +7,10 @@ import mimetypes
 import os
 import secrets
 import subprocess
+import threading
 import time
 import zlib
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -19,15 +21,11 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import x25519
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from tqdm import tqdm
-
-import threading
-
 from LocalAuthentication import (
     LAContext,
     LAPolicyDeviceOwnerAuthenticationWithBiometrics,
 )
-
+from tqdm import tqdm
 
 PROJECT_NAME = "cypher"
 VERSION = "1.0.0"
@@ -564,7 +562,7 @@ def require_touch_id(reason: str) -> None:
         )
 
     done = threading.Event()
-    result = {
+    result: dict[str, object] = {
         "success": False,
         "error": None,
     }
@@ -582,7 +580,7 @@ def require_touch_id(reason: str) -> None:
 
     done.wait()
 
-    if not result["success"]:
+    if not bool(result["success"]):
         raise PermissionError(
             f"Touch ID authentication failed: {result['error']}"
         )
@@ -650,7 +648,9 @@ def encrypt_payload(
 
     crypto_meta = {
         "crypto_mode": CRYPTO_MODE_X25519_AESGCM,
-        "ephemeral_public_key": base64.b64encode(ephemeral_public_bytes).decode("ascii"),
+        "ephemeral_public_key": base64.b64encode(
+            ephemeral_public_bytes
+        ).decode("ascii"),
         "salt": base64.b64encode(salt).decode("ascii"),
         "nonce": base64.b64encode(nonce).decode("ascii"),
         "ciphertext_size": str(len(ciphertext)),
@@ -693,7 +693,7 @@ def decrypt_payload(
 
 def encrypt_payload_multi(
     payload: bytes,
-    recipient_public_key_paths: list[str | Path],
+    recipient_public_key_paths: Sequence[str | Path],
 ) -> tuple[bytes, dict[str, object]]:
     if not recipient_public_key_paths:
         raise ValueError("At least one public key is required for encryption")
@@ -823,10 +823,10 @@ def decrypt_payload_multi(
 def build_audio_payload(
     payload: bytes,
     header: CypherHeader,
-    crypto_meta: dict[str, str] | None = None,
+    crypto_meta: dict[str, object] | None = None,
 ) -> bytes:
-    meta = crypto_meta or {"crypto_mode": CRYPTO_MODE_NONE}
-    crypto_mode = meta["crypto_mode"]
+    meta: dict[str, object] = crypto_meta or {"crypto_mode": CRYPTO_MODE_NONE}
+    crypto_mode = str(meta["crypto_mode"])
 
     if crypto_mode == CRYPTO_MODE_NONE:
         public_meta = {
@@ -860,7 +860,7 @@ def build_audio_payload(
     return AUDIO_MAGIC + meta_size + payload_size + meta_bytes + payload
 
 
-def parse_audio_payload(audio_payload: bytes) -> tuple[dict[str, str], bytes]:
+def parse_audio_payload(audio_payload: bytes) -> tuple[dict[str, object], bytes]:
     magic_size = len(AUDIO_MAGIC)
 
     if audio_payload[:magic_size] != AUDIO_MAGIC:
@@ -1003,7 +1003,7 @@ def split_chunks(payload: bytes, chunk_size: int) -> list[bytes]:
 def encode_chunked_payload(
     payload: bytes,
     compression_level: int,
-    public_key: list[str] | None,
+    public_key: Sequence[str] | None,
 ) -> tuple[bytes, str, str | None]:
     chunks = split_chunks(
         payload=payload,
@@ -1132,7 +1132,11 @@ def decode_chunked_payload(payload: bytes, private_key: str | None) -> bytes:
 
         if len(chunk) != header.raw_size:
             raise ValueError(
-                f"Invalid decoded chunk size: expected {header.raw_size}, got {len(chunk)}"
+                
+                    "Invalid decoded chunk size: "
+                    f"expected {header.raw_size}, "
+                    f"got {len(chunk)}"
+                
             )
 
         rebuilt += chunk
@@ -1277,7 +1281,7 @@ def read_audio(path: str | Path) -> tuple[int, np.ndarray]:
     return sample_rate, data
 
 
-def read_audio_payload(path: str | Path) -> tuple[dict[str, str], bytes]:
+def read_audio_payload(path: str | Path) -> tuple[dict[str, object], bytes]:
     _sample_rate, samples = read_audio(path)
     audio_payload = int16_samples_to_bytes(samples)
     return parse_audio_payload(audio_payload)
@@ -1293,9 +1297,11 @@ def resolve_default_public_key(args_public_key: str | None) -> str | None:
     return None
 
 
-def resolve_default_public_keys(args_public_keys: list[str] | None) -> list[str]:
+def resolve_default_public_keys(
+    args_public_keys: Sequence[str] | None,
+) -> list[str]:
     if args_public_keys:
-        return args_public_keys
+        return list(args_public_keys)
 
     if DEFAULT_PUBLIC_KEY_PATH.exists():
         return [str(DEFAULT_PUBLIC_KEY_PATH)]
@@ -1319,7 +1325,7 @@ def encode_container_to_audio(
     output_path: Path,
     sample_rate: int,
     compression_level: int,
-    public_key: list[str] | None,
+    public_key: Sequence[str] | None,
 ) -> None:
     chunked_payload, crypto_mode, public_key_path = encode_chunked_payload(
         payload=container,
@@ -1780,7 +1786,10 @@ def inspect_command(args: argparse.Namespace) -> None:
 
     crypto_meta, payload = read_audio_payload(audio_path)
 
-    public_meta = crypto_meta.get("public", {})
+    raw_public_meta = crypto_meta.get("public", {})
+    public_meta: dict[str, object] = (
+        raw_public_meta if isinstance(raw_public_meta, dict) else {}
+    )
     crypto_mode = crypto_meta.get("crypto_mode", CRYPTO_MODE_NONE)
 
     print()

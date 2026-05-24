@@ -5,7 +5,7 @@ Universal self-contained file ↔ audio codec.
 """
 
 __title__ = "cypher"
-__version__ = "0.5.2"
+__version__ = "1.0.1"
 
 __all__ = [
     "__title__",
