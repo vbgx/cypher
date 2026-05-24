@@ -116,3 +116,13 @@ temp/
 .keys/
 keys/
 *.pem
+
+# Cypher local runtime data
+.keys/
+data/input/*
+data/audio/*
+data/output/*
+
+!data/input/.gitkeep
+!data/audio/.gitkeep
+!data/output/.gitkeep

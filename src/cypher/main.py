@@ -18,12 +18,12 @@ from tqdm import tqdm
 
 
 PROJECT_NAME = "cypher"
-VERSION = "0.4.4"
+VERSION = "0.4.5"
 
 MAGIC = "CYPHER"
-CONTAINER_MAGIC = b"CYPHER44"
-AUDIO_MAGIC = b"CYPHERAUDIO44"
-HEADER_VERSION = 44
+CONTAINER_MAGIC = b"CYPHER45"
+AUDIO_MAGIC = b"CYPHERAUDIO45"
+HEADER_VERSION = 45
 
 PAYLOAD_MODE = "ANY_FILE_SELF_CONTAINED_AUDIO"
 CHECKSUM_ALGORITHM = "SHA256"
@@ -122,11 +122,7 @@ def detect_mime_type(path: str | Path) -> str:
     return mime_type or "application/octet-stream"
 
 
-def create_header(
-    input_path: str | Path,
-    raw_size: int,
-    checksum: str,
-) -> CypherHeader:
+def create_header(input_path: str | Path, raw_size: int, checksum: str) -> CypherHeader:
     path = Path(input_path)
 
     header = CypherHeader(
@@ -138,7 +134,6 @@ def create_header(
     )
 
     validate_header(header)
-
     return header
 
 
@@ -164,26 +159,20 @@ def validate_header(header: CypherHeader) -> None:
 
 def encode_header(header: CypherHeader) -> bytes:
     validate_header(header)
-
-    return json.dumps(
-        asdict(header),
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
+    return json.dumps(asdict(header), sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
 
 
 def decode_header(payload: bytes) -> CypherHeader:
-    data = json.loads(payload.decode("utf-8"))
-    header = CypherHeader(**data)
+    header = CypherHeader(**json.loads(payload.decode("utf-8")))
     validate_header(header)
-
     return header
 
 
 def build_container(header: CypherHeader, payload: bytes) -> bytes:
     header_bytes = encode_header(header)
     header_size = len(header_bytes).to_bytes(8, byteorder="big")
-
     return CONTAINER_MAGIC + header_size + header_bytes + payload
 
 
@@ -218,7 +207,21 @@ def parse_container(container: bytes) -> tuple[CypherHeader, bytes]:
 def generate_keypair(
     private_key_path: Path = DEFAULT_PRIVATE_KEY_PATH,
     public_key_path: Path = DEFAULT_PUBLIC_KEY_PATH,
+    force: bool = False,
 ) -> None:
+    if not force:
+        existing = [
+            path
+            for path in [private_key_path, public_key_path]
+            if path.exists()
+        ]
+
+        if existing:
+            raise FileExistsError(
+                "Key file already exists. Use --force to overwrite:\n"
+                + "\n".join(str(path) for path in existing)
+            )
+
     private_key_path.parent.mkdir(parents=True, exist_ok=True)
     public_key_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -243,13 +246,11 @@ def generate_keypair(
     print(f"Private key: {private_key_path}")
     print(f"Public key : {public_key_path}")
     print()
-    print("Keep the private key secret.")
+    print("WARNING: keep the private key secret. Never commit it.")
 
 
 def load_public_key(path: str | Path) -> x25519.X25519PublicKey:
-    data = Path(path).read_bytes()
-
-    key = serialization.load_pem_public_key(data)
+    key = serialization.load_pem_public_key(Path(path).read_bytes())
 
     if not isinstance(key, x25519.X25519PublicKey):
         raise TypeError("Public key must be an X25519 public key")
@@ -258,12 +259,7 @@ def load_public_key(path: str | Path) -> x25519.X25519PublicKey:
 
 
 def load_private_key(path: str | Path) -> x25519.X25519PrivateKey:
-    data = Path(path).read_bytes()
-
-    key = serialization.load_pem_private_key(
-        data,
-        password=None,
-    )
+    key = serialization.load_pem_private_key(Path(path).read_bytes(), password=None)
 
     if not isinstance(key, x25519.X25519PrivateKey):
         raise TypeError("Private key must be an X25519 private key")
@@ -271,15 +267,12 @@ def load_private_key(path: str | Path) -> x25519.X25519PrivateKey:
     return key
 
 
-def derive_aes_key(
-    shared_secret: bytes,
-    salt: bytes,
-) -> bytes:
+def derive_aes_key(shared_secret: bytes, salt: bytes) -> bytes:
     return HKDF(
         algorithm=hashes.SHA256(),
         length=32,
         salt=salt,
-        info=b"cypher-v4.4-x25519-aesgcm",
+        info=b"cypher-v4.5-x25519-aesgcm",
     ).derive(shared_secret)
 
 
@@ -298,17 +291,10 @@ def encrypt_payload(
     salt = os.urandom(16)
     nonce = os.urandom(12)
 
-    aes_key = derive_aes_key(
-        shared_secret=shared_secret,
-        salt=salt,
-    )
-
+    aes_key = derive_aes_key(shared_secret=shared_secret, salt=salt)
     aesgcm = AESGCM(aes_key)
-    ciphertext = aesgcm.encrypt(
-        nonce,
-        payload,
-        None,
-    )
+
+    ciphertext = aesgcm.encrypt(nonce, payload, None)
 
     ephemeral_public_bytes = ephemeral_public_key.public_bytes(
         encoding=serialization.Encoding.Raw,
@@ -317,7 +303,9 @@ def encrypt_payload(
 
     crypto_meta = {
         "crypto_mode": CRYPTO_MODE_X25519_AESGCM,
-        "ephemeral_public_key": base64.b64encode(ephemeral_public_bytes).decode("ascii"),
+        "ephemeral_public_key": base64.b64encode(ephemeral_public_bytes).decode(
+            "ascii"
+        ),
         "salt": base64.b64encode(salt).decode("ascii"),
         "nonce": base64.b64encode(nonce).decode("ascii"),
         "ciphertext_size": str(len(ciphertext)),
@@ -345,32 +333,36 @@ def decrypt_payload(
     nonce = base64.b64decode(crypto_meta["nonce"])
 
     shared_secret = private_key.exchange(ephemeral_public_key)
+    aes_key = derive_aes_key(shared_secret=shared_secret, salt=salt)
 
-    aes_key = derive_aes_key(
-        shared_secret=shared_secret,
-        salt=salt,
-    )
-
-    aesgcm = AESGCM(aes_key)
-
-    return aesgcm.decrypt(
-        nonce,
-        ciphertext,
-        None,
-    )
+    return AESGCM(aes_key).decrypt(nonce, ciphertext, None)
 
 
 def build_audio_payload(
     payload: bytes,
+    header: CypherHeader,
     crypto_meta: dict[str, str] | None = None,
 ) -> bytes:
     meta = crypto_meta or {"crypto_mode": CRYPTO_MODE_NONE}
-    meta_bytes = json.dumps(
-        meta,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
 
+    public_meta = {
+        "cypher_version": VERSION,
+        "original_name": header.original_name,
+        "original_suffix": header.original_suffix,
+        "mime_type": header.mime_type,
+        "raw_size": str(header.raw_size),
+        "checksum": header.checksum,
+        "crypto_mode": meta["crypto_mode"],
+        "payload_mode": PAYLOAD_MODE,
+        "compression_algorithm": COMPRESSION_ALGORITHM,
+    }
+
+    meta = {
+        **meta,
+        "public": public_meta,
+    }
+
+    meta_bytes = json.dumps(meta, sort_keys=True, separators=(",", ":")).encode("utf-8")
     meta_size = len(meta_bytes).to_bytes(8, byteorder="big")
     payload_size = len(payload).to_bytes(8, byteorder="big")
 
@@ -426,10 +418,7 @@ def resolve_audio_output(input_path: Path, audio_format: str) -> Path:
     return AUDIO_DIR / f"{input_path.stem}{suffix}"
 
 
-def resolve_decoded_output(
-    output_name: str | None,
-    original_name: str,
-) -> Path:
+def resolve_decoded_output(output_name: str | None, original_name: str) -> Path:
     if output_name is not None:
         output_path = Path(output_name)
 
@@ -441,10 +430,7 @@ def resolve_decoded_output(
     return OUTPUT_DIR / original_name
 
 
-def compress_container(
-    container: bytes,
-    compression_level: int,
-) -> bytes:
+def compress_container(container: bytes, compression_level: int) -> bytes:
     print("Compressing embedded container...")
     print(f"Container size    : {len(container):,} bytes")
     print(f"Compression level : {compression_level}")
@@ -460,11 +446,8 @@ def compress_container(
 
 def decompress_container(payload: bytes) -> bytes:
     print("Decompressing embedded container...")
-
     container = zlib.decompress(payload)
-
     print(f"Container bytes   : {len(container):,}")
-
     return container
 
 
@@ -476,11 +459,7 @@ def bytes_to_int16_samples(payload: bytes) -> np.ndarray:
 
     total_samples = len(payload) // 2
 
-    for _ in tqdm(
-        range(total_samples),
-        desc="Packing samples",
-        unit="sample",
-    ):
+    for _ in tqdm(range(total_samples), desc="Packing samples", unit="sample"):
         pass
 
     samples = np.frombuffer(payload, dtype=np.int16).copy()
@@ -493,21 +472,13 @@ def bytes_to_int16_samples(payload: bytes) -> np.ndarray:
 def int16_samples_to_bytes(samples: np.ndarray) -> bytes:
     print("Unpacking PCM16 audio samples into bytes...")
 
-    for _ in tqdm(
-        range(len(samples)),
-        desc="Unpacking samples",
-        unit="sample",
-    ):
+    for _ in tqdm(range(len(samples)), desc="Unpacking samples", unit="sample"):
         pass
 
     return samples.astype(np.int16).tobytes()
 
 
-def write_audio(
-    path: str | Path,
-    samples: np.ndarray,
-    sample_rate: int,
-) -> None:
+def write_audio(path: str | Path, samples: np.ndarray, sample_rate: int) -> None:
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -524,10 +495,7 @@ def write_audio(
 def read_audio(path: str | Path) -> tuple[int, np.ndarray]:
     print(f"Reading audio     : {path}")
 
-    data, sample_rate = sf.read(
-        path,
-        dtype="int16",
-    )
+    data, sample_rate = sf.read(path, dtype="int16")
 
     if data.ndim > 1:
         raise ValueError("Cypher payload audio must be mono")
@@ -538,10 +506,37 @@ def read_audio(path: str | Path) -> tuple[int, np.ndarray]:
     return sample_rate, data
 
 
+def read_audio_payload(path: str | Path) -> tuple[dict[str, str], bytes]:
+    _sample_rate, samples = read_audio(path)
+    audio_payload = int16_samples_to_bytes(samples)
+    return parse_audio_payload(audio_payload)
+
+
+def resolve_default_public_key(args_public_key: str | None) -> str | None:
+    if args_public_key is not None:
+        return args_public_key
+
+    if DEFAULT_PUBLIC_KEY_PATH.exists():
+        return str(DEFAULT_PUBLIC_KEY_PATH)
+
+    return None
+
+
+def resolve_default_private_key(args_private_key: str | None) -> str | None:
+    if args_private_key is not None:
+        return args_private_key
+
+    if DEFAULT_PRIVATE_KEY_PATH.exists():
+        return str(DEFAULT_PRIVATE_KEY_PATH)
+
+    return None
+
+
 def keygen_command(args: argparse.Namespace) -> None:
     generate_keypair(
         private_key_path=Path(args.private_key),
         public_key_path=Path(args.public_key),
+        force=args.force,
     )
 
 
@@ -558,12 +553,9 @@ def encode_command(args: argparse.Namespace) -> None:
         checksum=checksum,
     )
 
-    container = build_container(
-        header=header,
-        payload=payload,
-    )
+    container = build_container(header=header, payload=payload)
 
-    print("Starting V4.4 self-contained encode...")
+    print("Starting V4.5 self-contained encode...")
     print(f"Input file        : {input_path}")
     print(f"MIME type         : {header.mime_type}")
     print(f"Raw size          : {len(payload):,} bytes")
@@ -574,11 +566,7 @@ def encode_command(args: argparse.Namespace) -> None:
         compression_level=args.compression_level,
     )
 
-    public_key_path = args.public_key
-
-    if public_key_path is None:
-        value = input("Public key path for encryption [empty = no encryption]: ").strip()
-        public_key_path = value or None
+    public_key_path = resolve_default_public_key(args.public_key)
 
     if public_key_path is not None:
         encrypted_payload, crypto_meta = encrypt_payload(
@@ -591,6 +579,7 @@ def encode_command(args: argparse.Namespace) -> None:
 
     audio_payload = build_audio_payload(
         payload=encrypted_payload,
+        header=header,
         crypto_meta=crypto_meta,
     )
 
@@ -606,28 +595,23 @@ def encode_command(args: argparse.Namespace) -> None:
     print(f"Audio             : {output_path}")
     print(f"Embedded metadata : yes")
     print(f"Encryption        : {crypto_meta['crypto_mode']}")
+    print(f"Public key        : {public_key_path or 'none'}")
     print(f"Checksum          : {checksum}")
 
 
 def decode_command(args: argparse.Namespace) -> None:
     audio_path = resolve_input_audio(args.file)
 
-    print("Starting V4.4 self-contained decode...")
+    print("Starting V4.5 self-contained decode...")
 
-    _sample_rate, samples = read_audio(audio_path)
-
-    audio_payload = int16_samples_to_bytes(samples)
-    crypto_meta, payload = parse_audio_payload(audio_payload)
-
+    crypto_meta, payload = read_audio_payload(audio_path)
     crypto_mode = crypto_meta.get("crypto_mode", CRYPTO_MODE_NONE)
 
     if crypto_mode == CRYPTO_MODE_X25519_AESGCM:
-        private_key_path = args.private_key
+        private_key_path = resolve_default_private_key(args.private_key)
 
         if private_key_path is None:
-            private_key_path = input(
-                "Private key path for decryption: "
-            ).strip()
+            private_key_path = input("Private key path for decryption: ").strip()
 
         if not private_key_path:
             raise ValueError("Private key path is required for encrypted payloads")
@@ -643,7 +627,6 @@ def decode_command(args: argparse.Namespace) -> None:
         raise ValueError(f"Unsupported crypto mode: {crypto_mode}")
 
     container = decompress_container(compressed)
-
     header, restored_payload = parse_container(container)
 
     actual_checksum = compute_checksum(restored_payload)
@@ -659,10 +642,7 @@ def decode_command(args: argparse.Namespace) -> None:
         original_name=header.original_name,
     )
 
-    write_file(
-        path=output_path,
-        payload=restored_payload,
-    )
+    write_file(path=output_path, payload=restored_payload)
 
     print("Decode completed.")
     print(f"Audio             : {audio_path}")
@@ -673,13 +653,34 @@ def decode_command(args: argparse.Namespace) -> None:
     print(f"Checksum          : {actual_checksum}")
 
 
+def inspect_command(args: argparse.Namespace) -> None:
+    audio_path = resolve_input_audio(args.file)
+
+    print("Inspecting cypher audio...")
+    crypto_meta, payload = read_audio_payload(audio_path)
+
+    public_meta = crypto_meta.get("public", {})
+    crypto_mode = crypto_meta.get("crypto_mode", CRYPTO_MODE_NONE)
+
+    print()
+    print("Cypher payload")
+    print("--------------")
+    print(f"Audio file     : {audio_path}")
+    print(f"Original name  : {public_meta.get('original_name', 'unknown')}")
+    print(f"Original suffix: {public_meta.get('original_suffix', 'unknown')}")
+    print(f"MIME type      : {public_meta.get('mime_type', 'unknown')}")
+    print(f"Raw size       : {public_meta.get('raw_size', 'unknown')} bytes")
+    print(f"Checksum       : {public_meta.get('checksum', 'unknown')}")
+    print(f"Encryption     : {crypto_mode}")
+    print(f"Payload mode   : {public_meta.get('payload_mode', 'unknown')}")
+    print(f"Compression    : {public_meta.get('compression_algorithm', 'unknown')}")
+    print(f"Stored payload : {len(payload):,} bytes")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cypher",
-        description=(
-            "Encode any file into self-contained lossless audio "
-            "and decode it back."
-        ),
+        description="Encode any file into self-contained lossless audio.",
     )
 
     parser.add_argument(
@@ -688,47 +689,22 @@ def build_parser() -> argparse.ArgumentParser:
         version=f"{PROJECT_NAME} {VERSION}",
     )
 
-    subparsers = parser.add_subparsers(
-        dest="command",
-        required=True,
-    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
 
-    keygen_parser = subparsers.add_parser(
-        "keygen",
-        help="Generate PGP-like public/private keys",
-    )
-
-    keygen_parser.add_argument(
-        "--private-key",
-        default=str(DEFAULT_PRIVATE_KEY_PATH),
-    )
-
-    keygen_parser.add_argument(
-        "--public-key",
-        default=str(DEFAULT_PUBLIC_KEY_PATH),
-    )
-
+    keygen_parser = subparsers.add_parser("keygen")
+    keygen_parser.add_argument("--private-key", default=str(DEFAULT_PRIVATE_KEY_PATH))
+    keygen_parser.add_argument("--public-key", default=str(DEFAULT_PUBLIC_KEY_PATH))
+    keygen_parser.add_argument("--force", action="store_true")
     keygen_parser.set_defaults(func=keygen_command)
 
-    encode_parser = subparsers.add_parser(
-        "encode",
-        help="Encode any file to self-contained audio",
-    )
-
+    encode_parser = subparsers.add_parser("encode")
     encode_parser.add_argument("file")
-
     encode_parser.add_argument(
         "--format",
         default=DEFAULT_AUDIO_FORMAT,
         choices=["wav", "flac", "mp3"],
     )
-
-    encode_parser.add_argument(
-        "--sample-rate",
-        type=int,
-        default=DEFAULT_SAMPLE_RATE,
-    )
-
+    encode_parser.add_argument("--sample-rate", type=int, default=DEFAULT_SAMPLE_RATE)
     encode_parser.add_argument(
         "--compression-level",
         type=int,
@@ -736,56 +712,26 @@ def build_parser() -> argparse.ArgumentParser:
         choices=range(0, 10),
         metavar="[0-9]",
     )
-
     encode_parser.add_argument(
         "--public-key",
         default=None,
-        help="Encrypt payload for this public key",
+        help="Encrypt with this public key. Defaults to .keys/cypher_public.pem if present.",
     )
-
     encode_parser.set_defaults(func=encode_command)
 
-    decode_parser = subparsers.add_parser(
-        "decode",
-        help="Decode self-contained audio back to original file",
-    )
-
+    decode_parser = subparsers.add_parser("decode")
     decode_parser.add_argument("file")
-
-    decode_parser.add_argument(
-        "output",
-        nargs="?",
-        default=None,
-    )
-
+    decode_parser.add_argument("output", nargs="?", default=None)
     decode_parser.add_argument(
         "--private-key",
         default=None,
-        help="Private key required for encrypted payloads",
+        help="Decrypt with this private key. Defaults to .keys/cypher_private.pem if present.",
     )
-
     decode_parser.set_defaults(func=decode_command)
 
-    decore_parser = subparsers.add_parser(
-        "decore",
-        help="Alias for decode",
-    )
-
-    decore_parser.add_argument("file")
-
-    decore_parser.add_argument(
-        "output",
-        nargs="?",
-        default=None,
-    )
-
-    decore_parser.add_argument(
-        "--private-key",
-        default=None,
-        help="Private key required for encrypted payloads",
-    )
-
-    decore_parser.set_defaults(func=decode_command)
+    inspect_parser = subparsers.add_parser("inspect")
+    inspect_parser.add_argument("file")
+    inspect_parser.set_defaults(func=inspect_command)
 
     return parser
 

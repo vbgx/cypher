@@ -2,17 +2,16 @@
 
 Universal **lossless file ↔ audio codec**.
 
-`cypher` converts **any file type** into self-contained audio (`FLAC` / `WAV`) and reconstructs the original file automatically.
+`cypher` converts **any file type** into self-contained audio (`FLAC` / `WAV`) and restores the original file automatically.
 
-Supported payloads include:
+Supported payloads:
 
 - images
 - PDFs
 - videos
-- archives
 - source code
+- archives
 - binaries
-- audio
 - documents
 - arbitrary MIME types
 
@@ -20,58 +19,41 @@ Supported payloads include:
 
 # Concept
 
-Traditional storage:
+Encode:
 
 ```txt
-file
-→ binary file
-```
-
-cypher V4.3:
-
-```
 ANY FILE
 ↓
 raw bytes
 ↓
-embedded metadata header
+embedded metadata
 ↓
-container
+compression
 ↓
-lossless compression
+optional encryption
 ↓
-PCM16 audio payload
+PCM16 payload
 ↓
 FLAC / WAV
 ```
 
 Decode:
 
-```
+```txt
 FLAC / WAV
 ↓
 PCM16 payload
 ↓
+optional decryption
+↓
 decompression
 ↓
-container parsing
-↓
-embedded metadata recovery
+metadata recovery
 ↓
 original file restoration
 ```
 
-The decoder automatically restores:
-
-```
-filename
-extension
-mime type
-payload
-checksum
-```
-
-No external metadata file required.
+No external `.json` metadata file.
 
 ---
 
@@ -79,275 +61,210 @@ No external metadata file required.
 
 - universal file support
 - any MIME type
-- lossless encode
-- lossless decode
+- lossless encode / decode
 - FLAC output
 - WAV output
 - embedded metadata
-- automatic filename recovery
+- automatic filename restoration
 - SHA256 integrity verification
+- optional asymmetric encryption
+- inspect command
 - tqdm progress bars
-- self-contained audio containers
+- self-contained containers
 
 ---
 
 # Installation
 
-Clone:
-
-```
-git clone <repo>
-cd cypher
-```
-
 Create environment:
 
-```
-python-m venv .venv
+```bash
+python -m venv .venv
 source .venv/bin/activate
 ```
 
 Install:
 
-```
-pip install-e .
+```bash
+pip install -e .
 ```
 
 ---
 
 # Project Structure
 
-```
+```txt
 cypher/
-├── README.md
-├── Makefile
-├── pyproject.toml
+├── .keys/
 ├── data/
 │   ├── input/
 │   ├── audio/
 │   └── output/
-└── src/
-    └── cypher/
-        ├── __init__.py
-        └── main.py
+├── src/
+│   └── cypher/
+│       ├── __init__.py
+│       └── main.py
+├── Makefile
+├── pyproject.toml
+└── README.md
 ```
 
 ---
 
 # Usage
 
+## Generate keys
+
+Generate an encryption keypair:
+
+```bash
+make keygen
+```
+
+Keys are stored locally:
+
+```txt
+.keys/cypher_private.pem
+.keys/cypher_public.pem
+```
+
+Use force overwrite:
+
+```bash
+make keygen-force
+```
+
+---
+
 ## Encode
 
-Place files inside:
+Put files in:
 
-```
+```txt
 data/input/
-```
-
-Examples:
-
-```
-data/input/report.pdf
-data/input/video.mp4
-data/input/script.py
-data/input/archive.zip
-data/input/image.jpg
 ```
 
 Encode:
 
-```
-make encode report.pdf
-```
-
-or:
-
-```
-make encode video.mp4
-```
-
-or:
-
-```
-make encode script.py
+```bash
+make encode rapport.pdf
 ```
 
 Default output:
 
-```
-FLAC
+```txt
+data/audio/rapport.flac
 ```
 
-Produces:
+WAV mode:
 
+```bash
+make encode rapport.pdf FORMAT=wav
 ```
-data/audio/report.flac
+
+### Automatic encryption
+
+If:
+
+```txt
+.keys/cypher_public.pem
 ```
+
+exists, encryption is automatically enabled.
 
 ---
 
-## WAV output
-
-Use WAV:
-
-```
-make encode report.pdfFORMAT=wav
-```
-
-Produces:
-
-```
-data/audio/report.wav
-```
-
----
-
-# Decode
-
-Decode requires **only the audio file**.
-
-Automatic restore:
-
-```
-make decode report.flac
-```
-
-Produces:
-
-```
-data/output/report.pdf
-```
-
-You can still override output name:
-
-```
-make decode report.flac report_restored.pdf
-```
-
-Examples:
-
-```
-make decode video.flac
-make decode script.flac
-make decode archive.flac
-```
-
-Automatic outputs:
-
-```
-data/output/video.mp4
-data/output/script.py
-data/output/archive.zip
-```
-
----
-
-# Examples
-
-## PDF
-
-Encode:
-
-```
-make encode rapport.pdf
-```
+## Decode
 
 Decode:
 
-```
+```bash
 make decode rapport.flac
 ```
 
----
+Automatic restore:
 
-## MP4 Video
-
-Encode:
-
-```
-make encode video.mp4
+```txt
+data/output/rapport.pdf
 ```
 
-Decode:
+Custom output:
 
-```
-make decode video.flac
-```
-
----
-
-## Python Source
-
-Encode:
-
-```
-make encode py.py
+```bash
+make decode rapport.flac restored.pdf
 ```
 
-Decode:
+### Automatic decryption
 
+If:
+
+```txt
+.keys/cypher_private.pem
 ```
-make decode py.flac
-```
+
+exists, decryption is automatically used.
+
+If missing, cypher will request a private key path.
 
 ---
 
-## ZIP Archive
+## Inspect
 
-Encode:
+Inspect an audio payload without decoding:
 
+```bash
+make inspect rapport.flac
 ```
-make encode archive.zip
-```
 
-Decode:
+Displays:
 
-```
-make decode archive.flac
+```txt
+original filename
+mime type
+encryption mode
+payload size
+checksum
+compression backend
 ```
 
 ---
 
-# Embedded Metadata
+# Security
 
-V4.3 stores metadata **inside the audio container**.
+V4.5 supports optional **PGP-like encryption**.
 
-Embedded fields:
+Backend:
+
+```txt
+X25519
++
+AES-GCM
++
+HKDF-SHA256
+```
+
+Important:
+
+```txt
+KEEP THE PRIVATE KEY SECRET.
+```
+
+Never commit:
+
+```txt
+.keys/
+*.pem
+```
+
+Public metadata remains inspectable without decryption:
 
 - original filename
-- original extension
-- MIME type
-- checksum
+- mime type
 - payload size
-- codec version
-- compression algorithm
+- checksum
+- encryption mode
 
-No `.json` sidecar file is generated.
-
----
-
-# Integrity Verification
-
-cypher uses SHA256 validation.
-
-Encode:
-
-```
-checksum generated
-```
-
-Decode:
-
-```
-checksum verified
-```
-
-Failure:
-
-```
-checksum mismatch
-→ decode aborted
-```
+Payload content remains encrypted.
 
 ---
 
@@ -355,19 +272,19 @@ checksum mismatch
 
 Current backend:
 
-```
+```txt
 zlib
 ```
 
 Pipeline:
 
-```
+```txt
 raw bytes
-→ metadata header
-→ container
-→ zlib compression
+→ metadata container
+→ compression
+→ optional encryption
 → PCM16 samples
-→ FLAC/WAV
+→ FLAC / WAV
 ```
 
 ---
@@ -378,26 +295,21 @@ raw bytes
 
 Recommended.
 
-Properties:
-
-- lossless
-- smaller
-- compact
-- bit-perfect recovery
-
----
+```txt
+lossless
+smaller
+bit-perfect
+```
 
 ## WAV
 
 Supported.
 
-Properties:
-
-- lossless
-- larger files
-- compatibility mode
-
----
+```txt
+lossless
+larger files
+maximum compatibility
+```
 
 ## MP3
 
@@ -405,40 +317,10 @@ Rejected.
 
 Reason:
 
-```
+```txt
 MP3 is lossy.
 
-Arbitrary file bytes cannot be restored reliably.
-```
-
----
-
-# Progress Monitoring
-
-Large payloads show live progress.
-
-Example:
-
-```
-Compressing embedded container...
-Container size    : 11,930,126 bytes
-
-Packing samples:
-████████████████████ 100%
-
-Writing audio:
-data/audio/video.flac
-```
-
-Decode:
-
-```
-Reading audio...
-Unpacking samples:
-████████████████████ 100%
-
-Decompressing embedded container...
-Decode completed.
+Arbitrary binary payloads cannot be restored reliably.
 ```
 
 ---
@@ -449,100 +331,52 @@ Direct usage:
 
 Encode:
 
-```
-python-m cypher.main encode report.pdf
+```bash
+python -m cypher.main encode rapport.pdf
 ```
 
 Decode:
 
+```bash
+python -m cypher.main decode rapport.flac
 ```
-python-m cypher.main decode report.flac
+
+Inspect:
+
+```bash
+python -m cypher.main inspect rapport.flac
+```
+
+Generate keys:
+
+```bash
+python -m cypher.main keygen
 ```
 
 Version:
 
-```
-python-m cypher.main--version
-```
-
----
-
-# Roadmap
-
-## V1
-
-RGB → frequency mapping.
-
-```
-image
-→ frequencies
-→ FFT decode
+```bash
+python -m cypher.main --version
 ```
 
 ---
 
-## V2
+# Possible Improvements (V5+)
 
-Amplitude-based RGB encoding.
-
----
-
-## V3
-
-Lossless RGB payload transport.
-
----
-
-## V4.1
-
-Universal file codec.
-
-```
-ANY FILE
-→ bytes
-→ audio
-→ restored file
-```
-
----
-
-## V4.2
-
-Embedded metadata containers.
-
-No external JSON dependency.
-
----
-
-## V4.3 (current)
-
-Single-program architecture.
-
-```
-src/cypher/
-├── __init__.py
-└── main.py
-```
-
-Self-contained codec engine.
-
----
-
-## Future Ideas
-
-Potential V5:
+Potential future directions:
 
 - Brotli backend
 - LZMA backend
-- chunked streaming
-- payload encryption
+- adaptive compression selection
+- chunked streaming mode
+- multi-file bundles
+- encrypted metadata mode
+- digital signatures
 - Reed-Solomon error correction
 - steganographic transport
-- multi-file bundles
-- experimental robust MP3 mode
-
----
-
-# License
-
-MIT
+- distributed payload splitting
+- robust lossy transport experiments
+- optional password-protected private keys
+- encrypted `.keys` storage
+- payload deduplication
+- audio watermarking
