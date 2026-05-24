@@ -6,6 +6,7 @@ from pathlib import Path
 from cypher.config import (
     CHECKSUM_ALGORITHM,
     COMPRESSION_ALGORITHM,
+    CONTAINER_MAGIC,
     HEADER_VERSION,
     MAGIC,
     PAYLOAD_MODE,
@@ -17,9 +18,7 @@ class CypherHeader:
     original_name: str
     original_suffix: str
     mime_type: str
-    sample_rate: int
     raw_size: int
-    compressed_size: int
     checksum: str
     magic: str = MAGIC
     version: int = HEADER_VERSION
@@ -35,9 +34,7 @@ def detect_mime_type(path: str | Path) -> str:
 
 def create_header(
     input_path: str | Path,
-    sample_rate: int,
     raw_size: int,
-    compressed_size: int,
     checksum: str,
 ) -> CypherHeader:
     path = Path(input_path)
@@ -46,9 +43,7 @@ def create_header(
         original_name=path.name,
         original_suffix=path.suffix,
         mime_type=detect_mime_type(path),
-        sample_rate=sample_rate,
         raw_size=raw_size,
-        compressed_size=compressed_size,
         checksum=checksum,
     )
 
@@ -67,14 +62,8 @@ def validate_header(header: CypherHeader) -> None:
     if header.payload_mode != PAYLOAD_MODE:
         raise ValueError(f"Unsupported payload mode: {header.payload_mode}")
 
-    if header.sample_rate <= 0:
-        raise ValueError("Invalid sample rate")
-
     if header.raw_size < 0:
         raise ValueError("Invalid raw size")
-
-    if header.compressed_size <= 0:
-        raise ValueError("Invalid compressed size")
 
     if not header.original_name:
         raise ValueError("Original filename cannot be empty")
@@ -93,36 +82,59 @@ def validate_header(header: CypherHeader) -> None:
         )
 
 
-def metadata_path_for_audio(audio_path: str | Path) -> Path:
-    return Path(audio_path).with_suffix(".json")
-
-
-def save_header(
-    header: CypherHeader,
-    audio_path: str | Path,
-) -> Path:
+def encode_header(header: CypherHeader) -> bytes:
     validate_header(header)
 
-    metadata_path = metadata_path_for_audio(audio_path)
-    metadata_path.parent.mkdir(parents=True, exist_ok=True)
-
-    metadata_path.write_text(
-        json.dumps(asdict(header), indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-
-    return metadata_path
+    return json.dumps(
+        asdict(header),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
 
 
-def load_header(audio_path: str | Path) -> CypherHeader:
-    metadata_path = metadata_path_for_audio(audio_path)
-
-    if not metadata_path.exists():
-        raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
-
-    data = json.loads(metadata_path.read_text(encoding="utf-8"))
+def decode_header(payload: bytes) -> CypherHeader:
+    data = json.loads(payload.decode("utf-8"))
 
     header = CypherHeader(**data)
+
     validate_header(header)
 
     return header
+
+
+def build_container(
+    header: CypherHeader,
+    payload: bytes,
+) -> bytes:
+    header_bytes = encode_header(header)
+    header_size = len(header_bytes).to_bytes(8, byteorder="big")
+
+    return CONTAINER_MAGIC + header_size + header_bytes + payload
+
+
+def parse_container(container: bytes) -> tuple[CypherHeader, bytes]:
+    magic_size = len(CONTAINER_MAGIC)
+
+    if container[:magic_size] != CONTAINER_MAGIC:
+        raise ValueError("Invalid cypher container magic")
+
+    header_size_start = magic_size
+    header_size_end = header_size_start + 8
+
+    header_size = int.from_bytes(
+        container[header_size_start:header_size_end],
+        byteorder="big",
+    )
+
+    header_start = header_size_end
+    header_end = header_start + header_size
+
+    header = decode_header(container[header_start:header_end])
+    payload = container[header_end:]
+
+    if len(payload) != header.raw_size:
+        raise ValueError(
+            f"Invalid payload size: expected {header.raw_size}, got {len(payload)}"
+        )
+
+    return header, payload
