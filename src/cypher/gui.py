@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import random
 import re
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Qt, Signal, QTimer
-from PySide6.QtGui import QDragEnterEvent, QDropEvent
+from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -24,88 +26,183 @@ from PySide6.QtWidgets import (
 
 AUDIO_SUFFIXES = {".flac", ".wav"}
 
+MATRIX_ALPHABET = "01░▒▓█◇◆◈▣▤▥▦▧▨▩<>[]{}#$%&@+-*/=|:;"
 
-CYBER_QSS = """
-QMainWindow {
-    background: #080A12;
-    color: #E6F1FF;
+SOUND_DIR = Path("src/sounds_library")
+MATRIX_SOUND = SOUND_DIR / "matrix.mp3"
+OBSIDIAN_SOUND = SOUND_DIR / "unlimited_power.mp3"
+
+ASCII_CYPHER = r"""
+ ██████╗██╗   ██╗██████╗ ██╗  ██╗███████╗██████╗
+██╔════╝╚██╗ ██╔╝██╔══██╗██║  ██║██╔════╝██╔══██╗
+██║      ╚████╔╝ ██████╔╝███████║█████╗  ██████╔╝
+██║       ╚██╔╝  ██╔═══╝ ██╔══██║██╔══╝  ██╔══██╗
+╚██████╗   ██║   ██║     ██║  ██║███████╗██║  ██║
+ ╚═════╝   ╚═╝   ╚═╝     ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
+"""
+
+THEMES = {
+    "Obsidian Purple": """
+QMainWindow, QWidget {
+    background:#080A12;
+    color:#E6F1FF;
+    font-family:Menlo, Monaco, Consolas, monospace;
+    font-size:12px;
 }
-
-QWidget {
-    background: #080A12;
-    color: #E6F1FF;
-    font-family: Menlo, Monaco, Consolas, monospace;
-    font-size: 12px;
-}
-
 QLabel {
-    color: #A7B4C8;
-    font-weight: 600;
+    color:#A7B4C8;
+    font-weight:700;
 }
-
 QPushButton {
-    background: #111827;
-    color: #E6F1FF;
-    border: 1px solid #334155;
-    border-radius: 8px;
-    padding: 8px 12px;
-    font-weight: 700;
+    background:#111827;
+    color:#E6F1FF;
+    border:1px solid #334155;
+    border-radius:9px;
+    padding:8px 12px;
+    font-weight:800;
 }
-
 QPushButton:hover {
-    background: #1E293B;
-    border: 1px solid #A855F7;
-    color: #FFFFFF;
+    background:#1E293B;
+    border:1px solid #A855F7;
+    color:#FFFFFF;
 }
-
 QPushButton:pressed {
-    background: #7C3AED;
-    border: 1px solid #F0ABFC;
+    background:#7C3AED;
+    border:1px solid #F0ABFC;
 }
-
-QListWidget, QTextEdit {
-    background: #05070D;
-    color: #D1E7FF;
-    border: 1px solid #1E293B;
-    border-radius: 10px;
-    padding: 8px;
-    selection-background-color: #7C3AED;
+QListWidget, QTextEdit, QComboBox {
+    background:#05070D;
+    color:#D1E7FF;
+    border:1px solid #1E293B;
+    border-radius:10px;
+    padding:8px;
+    selection-background-color:#7C3AED;
 }
-
 QProgressBar {
-    background: #111827;
-    border: 1px solid #334155;
-    border-radius: 8px;
-    height: 16px;
-    text-align: center;
-    color: #E6F1FF;
-    font-weight: bold;
+    background:#111827;
+    border:1px solid #334155;
+    border-radius:8px;
+    height:16px;
+    text-align:center;
+    color:#E6F1FF;
+    font-weight:bold;
 }
-
 QProgressBar::chunk {
-    background: qlineargradient(
-        x1:0, y1:0, x2:1, y2:0,
+    background:qlineargradient(
+        x1:0,y1:0,x2:1,y2:0,
         stop:0 #7C3AED,
-        stop:0.5 #EC4899,
+        stop:.5 #EC4899,
         stop:1 #22D3EE
     );
-    border-radius: 8px;
+    border-radius:8px;
 }
-
-QScrollBar:vertical {
-    background: #05070D;
-    width: 10px;
+QFrame#Panel {
+    background:#0B1020;
+    border:1px solid #1E293B;
+    border-radius:14px;
 }
-
-QScrollBar::handle:vertical {
-    background: #334155;
-    border-radius: 5px;
+QLabel#AsciiTitle {
+    color:#E879F9;
+    font-size:10px;
+    font-weight:900;
 }
-
-QScrollBar::handle:vertical:hover {
-    background: #A855F7;
+QLabel#Subtitle {
+    color:#22D3EE;
+    font-size:12px;
 }
-"""
+QLabel#Metric {
+    color:#E6F1FF;
+    background:#111827;
+    border:1px solid #334155;
+    border-radius:10px;
+    padding:8px;
+}
+QLabel#Artifact {
+    color:#BBF7D0;
+    background:#052E16;
+    border:1px solid #16A34A;
+    border-radius:10px;
+    padding:10px;
+}
+""",
+    "Matrix": """
+QMainWindow, QWidget {
+    background:#000000;
+    color:#BBF7D0;
+    font-family:Menlo, Monaco, Consolas, monospace;
+    font-size:12px;
+}
+QLabel {
+    color:#22C55E;
+    font-weight:800;
+}
+QPushButton {
+    background:#031A0A;
+    color:#BBF7D0;
+    border:1px solid #166534;
+    border-radius:9px;
+    padding:8px 12px;
+    font-weight:900;
+}
+QPushButton:hover {
+    background:#064E3B;
+    border:1px solid #22C55E;
+    color:#FFFFFF;
+}
+QPushButton:pressed {
+    background:#16A34A;
+}
+QListWidget, QTextEdit, QComboBox {
+    background:#000000;
+    color:#00FF66;
+    border:1px solid #14532D;
+    border-radius:10px;
+    padding:8px;
+    selection-background-color:#166534;
+}
+QProgressBar {
+    background:#031A0A;
+    border:1px solid #166534;
+    border-radius:8px;
+    height:16px;
+    text-align:center;
+    color:#BBF7D0;
+    font-weight:bold;
+}
+QProgressBar::chunk {
+    background:#00FF66;
+    border-radius:8px;
+}
+QFrame#Panel {
+    background:#020D05;
+    border:1px solid #14532D;
+    border-radius:14px;
+}
+QLabel#AsciiTitle {
+    color:#00FF66;
+    font-size:10px;
+    font-weight:900;
+}
+QLabel#Subtitle {
+    color:#22C55E;
+    font-size:12px;
+}
+QLabel#Metric {
+    color:#BBF7D0;
+    background:#031A0A;
+    border:1px solid #166534;
+    border-radius:10px;
+    padding:8px;
+}
+QLabel#Artifact {
+    color:#DCFCE7;
+    background:#052E16;
+    border:1px solid #22C55E;
+    border-radius:10px;
+    padding:10px;
+}
+""",
+}
 
 PHASE_WEIGHTS = {
     "scan": (0, 10),
@@ -115,6 +212,24 @@ PHASE_WEIGHTS = {
     "chunks": (50, 85),
     "audio": (85, 100),
 }
+
+
+def format_size(num: int) -> str:
+    value = float(num)
+
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if value < 1024:
+            return f"{value:.1f} {unit}"
+
+        value /= 1024
+
+    return f"{value:.1f} PB"
+
+
+def matrix_line(seed_text: str) -> str:
+    base_len = max(72, min(160, len(seed_text) + 28))
+    payload = "".join(random.choice(MATRIX_ALPHABET) for _ in range(base_len))
+    return f"{payload}\n"
 
 
 class CommandWorker(QThread):
@@ -128,10 +243,10 @@ class CommandWorker(QThread):
         self.process: subprocess.Popen[str] | None = None
         self.cancel_requested = False
         self.started_at = 0.0
-        self.first_progress_seen = False
 
     def cancel(self) -> None:
         self.cancel_requested = True
+
         if self.process is not None and self.process.poll() is None:
             self.process.terminate()
 
@@ -172,13 +287,7 @@ class CommandWorker(QThread):
             phase = match.group(1)
             current = int(match.group(2))
             total = int(match.group(3))
-
-            percent = self.weighted_percent(
-                phase=phase,
-                current=current,
-                total=total,
-            )
-
+            percent = self.weighted_percent(phase, current, total)
             eta = self.compute_eta(percent)
 
             self.progress.emit(
@@ -195,7 +304,12 @@ class CommandWorker(QThread):
             total = int(chunk_match.group(2))
             percent = self.weighted_percent("chunks", current, total)
             eta = self.compute_eta(percent)
-            self.progress.emit(percent, f"chunks {current}/{total}", eta)
+
+            self.progress.emit(
+                percent,
+                f"chunks {current}/{total}",
+                eta,
+            )
             return
 
         tqdm_match = re.search(r"(Packing|Unpacking) samples:\s+(\d+)%", line)
@@ -204,7 +318,12 @@ class CommandWorker(QThread):
             current = int(tqdm_match.group(2))
             percent = self.weighted_percent("audio", current, 100)
             eta = self.compute_eta(percent)
-            self.progress.emit(percent, f"audio {current}/100", eta)
+
+            self.progress.emit(
+                percent,
+                f"audio {current}/100",
+                eta,
+            )
 
     def weighted_percent(self, phase: str, current: int, total: int) -> int:
         start, end = PHASE_WEIGHTS.get(phase, (0, 100))
@@ -232,102 +351,25 @@ class CommandWorker(QThread):
         return f"ETA: {seconds}s"
 
 
-class DropListWidget(QListWidget):
-    paths_dropped = Signal(list)
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.setAcceptDrops(True)
-        self.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-
-    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-            return
-        super().dragEnterEvent(event)
-
-    def dragMoveEvent(self, event: QDragEnterEvent) -> None:
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-            return
-        super().dragMoveEvent(event)
-
-    def dropEvent(self, event: QDropEvent) -> None:
-        paths: list[Path] = []
-
-        for url in event.mimeData().urls():
-            if url.isLocalFile():
-                paths.append(Path(url.toLocalFile()))
-
-        if paths:
-            self.paths_dropped.emit(paths)
-            event.acceptProposedAction()
-            return
-
-        super().dropEvent(event)
-
-
-class AudioDropLabel(QLabel):
-    audio_dropped = Signal(Path)
-
-    def __init__(self) -> None:
-        super().__init__("Drop FLAC / WAV here or select one")
-        self.setAcceptDrops(True)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setMinimumHeight(44)
-        self.setStyleSheet(
-            """
-            QLabel {
-                border: 1px dashed #777;
-                padding: 10px;
-            }
-            """
-        )
-
-    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        if not event.mimeData().hasUrls():
-            return
-
-        for url in event.mimeData().urls():
-            if url.isLocalFile() and Path(url.toLocalFile()).suffix.lower() in AUDIO_SUFFIXES:
-                event.acceptProposedAction()
-                return
-
-    def dropEvent(self, event: QDropEvent) -> None:
-        for url in event.mimeData().urls():
-            if not url.isLocalFile():
-                continue
-
-            path = Path(url.toLocalFile())
-
-            if path.suffix.lower() in AUDIO_SUFFIXES:
-                self.audio_dropped.emit(path)
-                event.acceptProposedAction()
-                return
-
-
 class CypherGui(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
 
-        self.setWindowTitle("cypher GUI")
-        self.resize(1050, 760)
+        self.setWindowTitle("CYPHER // AUDIO PAYLOAD CONTROL")
+        self.resize(1180, 860)
 
         self.selected_paths: list[Path] = []
         self.selected_audio: Path | None = None
         self.worker: CommandWorker | None = None
         self.has_real_progress = False
-        self.pulse_state = 0
+        self.last_artifact: Path | None = None
 
-        self.pulse_timer = QTimer(self)
-        self.pulse_timer.timeout.connect(self.animate_pulse)
+        self.sound_process: subprocess.Popen[bytes] | None = None
 
-        self.files_list = DropListWidget()
-        self.files_list.paths_dropped.connect(self.add_paths)
+        self.files_list = QListWidget()
+        self.files_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
 
-        self.audio_label = AudioDropLabel()
-        self.audio_label.audio_dropped.connect(self.set_audio)
-
+        self.audio_label = QLabel("NO AUDIO SELECTED")
         self.logs = QTextEdit()
         self.logs.setReadOnly(True)
 
@@ -335,35 +377,65 @@ class CypherGui(QMainWindow):
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
 
-        self.status_label = QLabel("Ready")
-        self.phase_label = QLabel("Phase: idle")
-        self.eta_label = QLabel("ETA: -")
+        self.status_label = QLabel("SYSTEM: READY")
+        self.phase_label = QLabel("PHASE: IDLE")
+        self.eta_label = QLabel("ETA: --")
 
-        select_files_button = QPushButton("Select files")
+        self.title_label = QLabel(ASCII_CYPHER)
+        self.title_label.setObjectName("AsciiTitle")
+
+        self.subtitle_label = QLabel(
+            "AUDIO PAYLOAD CONTROL // ENCRYPTED TRANSPORT ENGINE"
+        )
+        self.subtitle_label.setObjectName("Subtitle")
+
+        self.theme_select = QComboBox()
+        self.theme_select.addItems(["Obsidian Purple", "Matrix"])
+        self.theme_select.currentTextChanged.connect(self.apply_theme)
+
+        self.metric_items = QLabel("ITEMS: 0")
+        self.metric_items.setObjectName("Metric")
+
+        self.metric_size = QLabel("SIZE: 0 B")
+        self.metric_size.setObjectName("Metric")
+
+        self.metric_mode = QLabel("MODE: IDLE")
+        self.metric_mode.setObjectName("Metric")
+
+        self.metric_crypto = QLabel("CRYPTO: AUTO")
+        self.metric_crypto.setObjectName("Metric")
+
+        self.artifact_label = QLabel("ARTIFACT: none")
+        self.artifact_label.setObjectName("Artifact")
+
+        self.open_artifact_button = QPushButton("OPEN OUTPUT FOLDER")
+        self.open_artifact_button.clicked.connect(self.open_artifact_folder)
+
+        select_files_button = QPushButton("＋ FILES")
         select_files_button.clicked.connect(self.select_files)
 
-        select_folder_button = QPushButton("Select folder")
+        select_folder_button = QPushButton("＋ FOLDER")
         select_folder_button.clicked.connect(self.select_folder)
 
-        remove_button = QPushButton("Remove selected")
+        remove_button = QPushButton("－ REMOVE")
         remove_button.clicked.connect(self.remove_selected)
 
-        clear_button = QPushButton("Clear")
+        clear_button = QPushButton("⌫ CLEAR")
         clear_button.clicked.connect(self.clear_selection)
 
-        encode_button = QPushButton("Encode / Bundle")
+        encode_button = QPushButton("⚡ ENCODE / BUNDLE")
         encode_button.clicked.connect(self.encode_or_bundle)
 
-        select_audio_button = QPushButton("Select FLAC / WAV")
+        select_audio_button = QPushButton("◎ SELECT AUDIO")
         select_audio_button.clicked.connect(self.select_audio)
 
-        inspect_button = QPushButton("Inspect")
+        inspect_button = QPushButton("◉ INSPECT")
         inspect_button.clicked.connect(self.inspect_audio)
 
-        restore_button = QPushButton("Decode / Restore")
+        restore_button = QPushButton("⟲ DECODE / RESTORE")
         restore_button.clicked.connect(self.decode_audio)
 
-        cancel_button = QPushButton("Cancel")
+        cancel_button = QPushButton("✕ ABORT")
         cancel_button.clicked.connect(self.cancel_command)
 
         top_buttons = QHBoxLayout()
@@ -384,37 +456,177 @@ class CypherGui(QMainWindow):
         progress_info.addWidget(self.phase_label)
         progress_info.addWidget(self.eta_label)
 
+        header_layout = QHBoxLayout()
+        header_text = QVBoxLayout()
+        header_text.addWidget(self.title_label)
+        header_text.addWidget(self.subtitle_label)
+        header_layout.addLayout(header_text)
+        header_layout.addWidget(QLabel("THEME"))
+        header_layout.addWidget(self.theme_select)
+
+        dashboard = QHBoxLayout()
+        dashboard.addWidget(self.metric_items)
+        dashboard.addWidget(self.metric_size)
+        dashboard.addWidget(self.metric_mode)
+        dashboard.addWidget(self.metric_crypto)
+
+        input_panel = QFrame()
+        input_panel.setObjectName("Panel")
+        input_layout = QVBoxLayout()
+        input_layout.addWidget(QLabel("▌ PAYLOAD INPUT // FILES + FOLDERS"))
+        input_layout.addLayout(top_buttons)
+        input_layout.addWidget(self.files_list)
+        input_panel.setLayout(input_layout)
+
+        audio_panel = QFrame()
+        audio_panel.setObjectName("Panel")
+        audio_layout = QVBoxLayout()
+        audio_layout.addWidget(QLabel("▌ AUDIO CONTAINER // FLAC + WAV"))
+        audio_layout.addLayout(audio_buttons)
+        audio_layout.addWidget(self.audio_label)
+        audio_panel.setLayout(audio_layout)
+
+        telemetry_panel = QFrame()
+        telemetry_panel.setObjectName("Panel")
+        telemetry_layout = QVBoxLayout()
+        telemetry_layout.addWidget(QLabel("▌ EXECUTION TELEMETRY"))
+        telemetry_layout.addWidget(self.progress_bar)
+        telemetry_layout.addLayout(progress_info)
+        telemetry_layout.addWidget(self.artifact_label)
+        telemetry_layout.addWidget(self.open_artifact_button)
+        telemetry_panel.setLayout(telemetry_layout)
+
+        logs_panel = QFrame()
+        logs_panel.setObjectName("Panel")
+        logs_layout = QVBoxLayout()
+        logs_layout.addWidget(QLabel("▌ TERMINAL STREAM"))
+        logs_layout.addWidget(self.logs)
+        logs_panel.setLayout(logs_layout)
+
         layout = QVBoxLayout()
-        layout.addWidget(QLabel("Files / folders to encode or bundle"))
-        layout.addLayout(top_buttons)
-        layout.addWidget(self.files_list)
-        layout.addWidget(QLabel("Audio to inspect or restore"))
-        layout.addLayout(audio_buttons)
-        layout.addWidget(self.audio_label)
-        layout.addWidget(QLabel("Progress"))
-        layout.addWidget(self.progress_bar)
-        layout.addLayout(progress_info)
-        layout.addWidget(QLabel("Logs"))
-        layout.addWidget(self.logs)
+        layout.addLayout(header_layout)
+        layout.addLayout(dashboard)
+        layout.addWidget(input_panel)
+        layout.addWidget(audio_panel)
+        layout.addWidget(telemetry_panel)
+        layout.addWidget(logs_panel)
 
         container = QWidget()
         container.setLayout(layout)
         self.setCentralWidget(container)
 
+        self.apply_theme(self.theme_select.currentText())
+        self.boot_sequence()
+        self.update_dashboard()
+
+    def current_theme(self) -> str:
+        return self.theme_select.currentText()
+
+    def apply_theme(self, name: str) -> None:
+        QApplication.instance().setStyleSheet(THEMES[name])
+
+        if name == "Matrix":
+            self.subtitle_label.setText("MATRIX STREAM // ENCRYPTED SIGNAL VIEW")
+            self.logs.clear()
+            self.log("> MATRIX STREAM ONLINE\n")
+            self.log("> VISUAL LOG OBFUSCATION ENABLED\n\n")
+            return
+
+        self.subtitle_label.setText(
+            "AUDIO PAYLOAD CONTROL // ENCRYPTED TRANSPORT ENGINE"
+        )
+        self.logs.clear()
+        self.log("> obsidian console ready\n")
+        self.log("> normal log stream enabled\n\n")
+
+    def boot_sequence(self) -> None:
+        self.log("> loading cypher gui shell...\n")
+        self.log("> initializing payload panels...\n")
+        self.log("> binding encrypted audio transport...\n")
+        self.log("> telemetry channel online...\n")
+        self.log("> SYSTEM READY.\n\n")
+
     def log(self, text: str) -> None:
+        self.capture_artifact_from_log(text)
+
+        if self.current_theme() == "Matrix":
+            rendered = matrix_line(text)
+        else:
+            rendered = text
+
         self.logs.moveCursor(self.logs.textCursor().MoveOperation.End)
-        self.logs.insertPlainText(text)
+        self.logs.insertPlainText(rendered)
         self.logs.moveCursor(self.logs.textCursor().MoveOperation.End)
 
-    def animate_pulse(self) -> None:
-        self.pulse_state = (self.pulse_state + 1) % 4
-        dots = "." * (self.pulse_state + 1)
+    def play_theme_sound(self) -> None:
+        if self.current_theme() == "Matrix":
+            sound = MATRIX_SOUND
+        else:
+            sound = OBSIDIAN_SOUND
 
-        if self.worker is not None and self.worker.isRunning():
-            if not self.has_real_progress:
-                self.status_label.setText(
-                    f"SYSTEM: INITIALIZING PAYLOAD PIPELINE{dots}"
-                )
+        if not sound.exists():
+            self.log(f"Sound file missing: {sound}\n")
+            return
+
+        if self.sound_process is not None and self.sound_process.poll() is None:
+            self.sound_process.terminate()
+
+        self.sound_process = subprocess.Popen(
+            ["afplay", str(sound.resolve())],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def capture_artifact_from_log(self, line: str) -> None:
+        match = re.search(r"Audio\s+:\s+(.+)", line)
+
+        if not match:
+            return
+
+        candidate = Path(match.group(1).strip())
+        self.last_artifact = candidate
+        self.artifact_label.setText(f"ARTIFACT: {candidate}")
+
+    def open_artifact_folder(self) -> None:
+        if self.last_artifact is None:
+            self.log("No artifact folder to open.\n")
+            return
+
+        subprocess.run(
+            ["open", str(self.last_artifact.parent)],
+            check=False,
+        )
+
+    def selected_total_size(self) -> int:
+        total = 0
+
+        for path in self.selected_paths:
+            if path.is_file():
+                total += path.stat().st_size
+                continue
+
+            if path.is_dir():
+                for child in path.rglob("*"):
+                    if child.is_file():
+                        total += child.stat().st_size
+
+        return total
+
+    def update_dashboard(self) -> None:
+        total_size = self.selected_total_size()
+        items = len(self.selected_paths)
+
+        if items == 0:
+            mode = "IDLE"
+        elif items == 1 and self.selected_paths[0].is_file():
+            mode = "SINGLE"
+        else:
+            mode = "BUNDLE"
+
+        self.metric_items.setText(f"ITEMS: {items}")
+        self.metric_size.setText(f"SIZE: {format_size(total_size)}")
+        self.metric_mode.setText(f"MODE: {mode}")
+        self.metric_crypto.setText("CRYPTO: AUTO")
 
     def update_progress(self, value: int, phase: str, eta: str) -> None:
         if not self.has_real_progress:
@@ -423,8 +635,8 @@ class CypherGui(QMainWindow):
 
         value = max(0, min(100, value))
         self.progress_bar.setValue(value)
-        self.status_label.setText(f"Running... {value}%")
-        self.phase_label.setText(f"Phase: {phase}")
+        self.status_label.setText(f"SYSTEM: RUNNING // {value}%")
+        self.phase_label.setText(f"PHASE: {phase.upper()}")
         self.eta_label.setText(eta)
 
     def select_files(self) -> None:
@@ -454,8 +666,9 @@ class CypherGui(QMainWindow):
                 self.files_list.addItem(str(path))
 
         self.status_label.setText(f"{len(self.selected_paths)} item(s) selected")
-        self.phase_label.setText("Phase: idle")
-        self.eta_label.setText("ETA: -")
+        self.phase_label.setText("PHASE: IDLE")
+        self.eta_label.setText("ETA: --")
+        self.update_dashboard()
 
     def remove_selected(self) -> None:
         selected_items = self.files_list.selectedItems()
@@ -470,20 +683,24 @@ class CypherGui(QMainWindow):
             self.files_list.takeItem(row)
 
         self.status_label.setText(f"{len(self.selected_paths)} item(s) selected")
+        self.update_dashboard()
 
     def clear_selection(self) -> None:
         self.selected_paths.clear()
         self.selected_audio = None
         self.has_real_progress = False
+        self.last_artifact = None
 
         self.files_list.clear()
-        self.audio_label.setText("Drop FLAC / WAV here or select one")
+        self.audio_label.setText("NO AUDIO SELECTED")
         self.logs.clear()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
-        self.status_label.setText("Ready")
-        self.phase_label.setText("Phase: idle")
-        self.eta_label.setText("ETA: -")
+        self.status_label.setText("SYSTEM: READY")
+        self.phase_label.setText("PHASE: IDLE")
+        self.eta_label.setText("ETA: --")
+        self.artifact_label.setText("ARTIFACT: none")
+        self.update_dashboard()
 
     def select_audio(self) -> None:
         file_name, _ = QFileDialog.getOpenFileName(
@@ -505,9 +722,9 @@ class CypherGui(QMainWindow):
 
         self.selected_audio = path
         self.audio_label.setText(str(path))
-        self.status_label.setText("Audio selected")
-        self.phase_label.setText("Phase: idle")
-        self.eta_label.setText("ETA: -")
+        self.status_label.setText("AUDIO SELECTED")
+        self.phase_label.setText("PHASE: IDLE")
+        self.eta_label.setText("ETA: --")
 
     def run_command(self, command: list[str]) -> None:
         if self.worker is not None and self.worker.isRunning():
@@ -516,35 +733,33 @@ class CypherGui(QMainWindow):
 
         self.has_real_progress = False
         self.progress_bar.setRange(0, 0)
-        self.status_label.setText("Preparing and encoding...")
-        self.phase_label.setText("Phase: starting")
-        self.eta_label.setText("ETA: refining...")
+        self.status_label.setText("SYSTEM: INITIALIZING PAYLOAD PIPELINE")
+        self.phase_label.setText("PHASE: STARTING")
+        self.eta_label.setText("ETA: REFINING")
+
+        self.play_theme_sound()
 
         self.worker = CommandWorker(command)
         self.worker.output.connect(self.log)
         self.worker.progress.connect(self.update_progress)
         self.worker.finished_ok.connect(self.command_finished)
-        self.pulse_timer.start(350)
         self.worker.start()
 
     def command_finished(self, code: int) -> None:
-        self.pulse_timer.stop()
         self.progress_bar.setRange(0, 100)
 
         if code == 0:
             self.progress_bar.setValue(100)
-            self.status_label.setText("Done 100%")
-            self.phase_label.setText("Phase: completed")
+            self.status_label.setText("SYSTEM: COMPLETE // 100%")
+            self.phase_label.setText("PHASE: COMPLETED")
             self.eta_label.setText("ETA: 0s")
-        else:
-            self.status_label.setText(f"Failed with exit code {code}")
-            self.phase_label.setText("Phase: failed")
-            self.eta_label.setText("ETA: -")
-
-        if code == 0:
             self.log("\nOperation completed successfully.\n")
-        else:
-            self.log(f"\nOperation failed with exit code {code}.\n")
+            return
+
+        self.status_label.setText(f"SYSTEM: FAILED // EXIT {code}")
+        self.phase_label.setText("PHASE: FAILED")
+        self.eta_label.setText("ETA: --")
+        self.log(f"\nOperation failed with exit code {code}.\n")
 
     def cancel_command(self) -> None:
         if self.worker is None or not self.worker.isRunning():
@@ -552,10 +767,12 @@ class CypherGui(QMainWindow):
             return
 
         self.worker.cancel()
-        self.status_label.setText("Cancelling...")
-        self.phase_label.setText("Phase: cancelling")
-        self.eta_label.setText("ETA: -")
-        self.pulse_timer.stop()
+        if self.sound_process is not None and self.sound_process.poll() is None:
+            self.sound_process.terminate()
+
+        self.status_label.setText("SYSTEM: ABORT REQUESTED")
+        self.phase_label.setText("PHASE: CANCELLING")
+        self.eta_label.setText("ETA: --")
         self.log("\nCancellation requested.\n")
 
     def encode_or_bundle(self) -> None:
@@ -615,7 +832,6 @@ class CypherGui(QMainWindow):
 
 def main() -> None:
     app = QApplication(sys.argv)
-    app.setStyleSheet(CYBER_QSS)
     window = CypherGui()
     window.show()
     sys.exit(app.exec())

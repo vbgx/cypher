@@ -560,6 +560,92 @@ GUI improvements:
 
 ---
 
+---
+
+# V5.3 — Stylish GUI
+
+V5.3 introduces a redesigned graphical interface focused on usability, atmosphere, and real-time operational feedback.
+
+The GUI now supports two dedicated visual environments:
+
+## Obsidian Purple
+
+A clean cyber-terminal interface optimized for readability.
+
+Features:
+
+- dark purple operator theme
+- structured logs
+- dashboard telemetry
+- progress tracking
+- ETA estimation
+- artifact tracking
+- operational audio feedback (`unlimited_power.mp3`)
+
+Designed for:
+
+```txt
+clear monitoring
+clean workflow visibility
+long encoding / decoding sessions
+```
+
+## Matrix
+
+A fully stylized encrypted console mode.
+
+Features:
+
+- green cryptographic interface
+- Matrix-inspired visual theme
+- obfuscated log stream rendering
+- encrypted symbol output simulation
+- real-time progress telemetry
+- audio atmosphere (`matrix.mp3`)
+
+The Matrix mode intentionally transforms log rendering into a visual signal stream:
+
+```txt
+01▓▒░█◆▣<>[]{}#%&@01▒▓█◇◆
+```
+
+while preserving the underlying command execution.
+
+## GUI Features
+
+V5.3 GUI currently includes:
+
+- file selection
+- folder selection
+- automatic encode / bundle workflow
+- automatic decode / restore workflow
+- integrated inspect workflow
+- dashboard metrics
+    - items count
+    - payload size
+    - operation mode
+    - crypto status
+- real progress monitoring
+- weighted ETA estimation
+- operation cancellation
+- output artifact tracking
+- output folder quick access
+- theme switching
+
+The GUI is launched with:
+
+```bash
+make gui
+```
+
+or:
+
+```bash
+python -m cypher.gui
+```
+
+---
+
 # Future Directions
 
 Potential next steps:
