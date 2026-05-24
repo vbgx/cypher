@@ -86,6 +86,7 @@ class CypherHeader:
     mime_type: str
     raw_size: int
     checksum: str
+    relative_path: str | None = None
     magic: str = MAGIC
     version: int = HEADER_VERSION
     payload_mode: str = PAYLOAD_MODE
@@ -237,12 +238,26 @@ def detect_mime_type(path: str | Path) -> str:
     mime_type, _encoding = mimetypes.guess_type(Path(path).name)
     return mime_type or "application/octet-stream"
 
+def safe_relative_path(path: Path) -> str:
+    parts = []
+
+    for part in path.parts:
+        if part in {"", ".", ".."}:
+            continue
+
+        parts.append(part)
+
+    if not parts:
+        raise ValueError(f"Invalid relative path: {path}")
+
+    return str(Path(*parts))
 
 def create_header(
     input_path: str | Path,
     raw_size: int,
     checksum: str,
     payload_mode: str = PAYLOAD_MODE,
+    relative_path: str | None = None,
 ) -> CypherHeader:
     path = Path(input_path)
 
@@ -253,6 +268,7 @@ def create_header(
         raw_size=raw_size,
         checksum=checksum,
         payload_mode=payload_mode,
+        relative_path=relative_path,
     )
 
     validate_header(header)
@@ -289,7 +305,12 @@ def encode_header(header: CypherHeader) -> bytes:
 
 
 def decode_header(payload: bytes) -> CypherHeader:
-    header = CypherHeader(**json.loads(payload.decode("utf-8")))
+    data = json.loads(payload.decode("utf-8"))
+
+    if "relative_path" not in data:
+        data["relative_path"] = None
+
+    header = CypherHeader(**data)
     validate_header(header)
     return header
 
@@ -762,7 +783,11 @@ def resolve_decoded_output(
     return OUTPUT_DIR / original_name
 
 
-def resolve_bundle_output_dir(output_name: str | None) -> Path:
+
+def resolve_bundle_output_dir(
+    output_name: str | None,
+    bundle_name: str | None = None,
+) -> Path:
     if output_name is not None:
         output_path = Path(output_name)
 
@@ -771,8 +796,10 @@ def resolve_bundle_output_dir(output_name: str | None) -> Path:
 
         return OUTPUT_DIR / output_name
 
-    return OUTPUT_DIR / DEFAULT_BUNDLE_NAME
+    if bundle_name:
+        return OUTPUT_DIR / bundle_name
 
+    return OUTPUT_DIR / DEFAULT_BUNDLE_NAME
 
 def unique_output_path(directory: Path, filename: str) -> Path:
     candidate = directory / filename
@@ -1053,10 +1080,14 @@ def encode_container_to_audio(
     audio_payload = build_audio_payload(
         payload=chunked_payload,
         header=header,
-        crypto_meta={"crypto_mode": crypto_mode},
+        crypto_meta={
+            "crypto_mode": crypto_mode,
+        },
     )
 
-    samples = bytes_to_int16_samples(audio_payload)
+    samples = bytes_to_int16_samples(
+        audio_payload
+    )
 
     write_audio(
         path=output_path,
@@ -1069,8 +1100,12 @@ def encode_container_to_audio(
     print("Embedded metadata : yes")
     print(f"Encryption        : {crypto_mode}")
     print(f"Public key        : {public_key_path or 'none'}")
-    print(f"Checksum          : {header.checksum}")
+    print(f"Payload mode      : {header.payload_mode}")
 
+    if header.relative_path:
+        print(f"Relative path     : {header.relative_path}")
+
+    print(f"Checksum          : {header.checksum}")
 
 def keygen_command(args: argparse.Namespace) -> None:
     generate_keypair(
@@ -1120,45 +1155,109 @@ def encode_command(args: argparse.Namespace) -> None:
     )
 
 
+
 def bundle_command(args: argparse.Namespace) -> None:
-    input_paths = [
-        resolve_input_file(file_arg)
+    print("Starting V5.1 multi-file bundle encode...")
+
+    raw_inputs = [
+        Path(file_arg)
         for file_arg in args.files
     ]
 
-    bundled_files: list[tuple[CypherHeader, bytes]] = []
-    total_size = 0
+    input_paths: list[Path] = []
+    directory_roots: list[Path] = []
 
-    print("Starting V4.9 multi-file bundle encode...")
+    for path in raw_inputs:
+        resolved = resolve_input_file(path)
+
+        if resolved.is_file():
+            input_paths.append(resolved)
+            continue
+
+        if resolved.is_dir():
+            directory_roots.append(resolved)
+
+            files = sorted(
+                child
+                for child in resolved.rglob("*")
+                if child.is_file()
+            )
+
+            input_paths.extend(files)
+            continue
+
+        raise ValueError(f"Unsupported path: {resolved}")
+
+    if not input_paths:
+        raise ValueError("Bundle is empty.")
+
     print(f"Files count       : {len(input_paths)}")
+
+    if len(directory_roots) == 1 and len(raw_inputs) == 1:
+        common_root = directory_roots[0].parent
+        bundle_root_name = directory_roots[0].name
+    else:
+        try:
+            common_root = Path(
+                os.path.commonpath(
+                    [
+                        str(path.parent)
+                        for path in input_paths
+                    ]
+                )
+            )
+        except ValueError:
+            common_root = Path.cwd()
+
+        bundle_root_name = common_root.name
+
+    bundle_entries: list[tuple[CypherHeader, bytes]] = []
+    total_size = 0
 
     for input_path in input_paths:
         payload = read_file(input_path)
         checksum = compute_checksum(payload)
-        total_size += len(payload)
+
+        try:
+            relative_path = safe_relative_path(
+                input_path.relative_to(common_root)
+            )
+        except ValueError:
+            relative_path = input_path.name
 
         header = create_header(
             input_path=input_path,
             raw_size=len(payload),
             checksum=checksum,
             payload_mode=PAYLOAD_MODE,
+            relative_path=relative_path,
         )
 
-        bundled_files.append((header, payload))
+        bundle_entries.append((header, payload))
+        total_size += len(payload)
 
-        print(f"- {input_path} ({len(payload):,} bytes, {header.mime_type})")
+        print(
+            f"- {relative_path} "
+            f"({len(payload):,} bytes, {header.mime_type})"
+        )
 
-    bundle_container = build_bundle_container(bundled_files)
-    bundle_checksum = compute_checksum(bundle_container)
+    print(f"Total raw size    : {total_size:,} bytes")
 
-    bundle_name = args.name or DEFAULT_BUNDLE_NAME
-    pseudo_input_path = Path(f"{bundle_name}.cypherbundle")
+    bundle_payload = build_bundle_container(bundle_entries)
+
+    bundle_name = args.name or bundle_root_name or DEFAULT_BUNDLE_NAME
 
     bundle_header = create_header(
-        input_path=pseudo_input_path,
-        raw_size=len(bundle_container),
-        checksum=bundle_checksum,
+        input_path=Path(f"{bundle_name}.cypherbundle"),
+        raw_size=len(bundle_payload),
+        checksum=compute_checksum(bundle_payload),
         payload_mode=BUNDLE_PAYLOAD_MODE,
+        relative_path=bundle_name,
+    )
+
+    wrapped_container = build_container(
+        header=bundle_header,
+        payload=bundle_payload,
     )
 
     output_path = resolve_audio_output(
@@ -1169,17 +1268,12 @@ def bundle_command(args: argparse.Namespace) -> None:
 
     output_path = BUNDLE_AUDIO_DIR / output_path.name
 
-    print(f"Total raw size    : {total_size:,} bytes")
-    print(f"Bundle size       : {len(bundle_container):,} bytes")
+    print(f"Bundle name       : {bundle_name}")
+    print(f"Bundle size       : {len(bundle_payload):,} bytes")
     print(f"Sample rate       : {args.sample_rate} Hz")
 
-    container = build_container(
-        header=bundle_header,
-        payload=bundle_container,
-    )
-
     encode_container_to_audio(
-        container=container,
+        container=wrapped_container,
         header=bundle_header,
         output_path=output_path,
         sample_rate=args.sample_rate,
@@ -1191,7 +1285,7 @@ def bundle_command(args: argparse.Namespace) -> None:
 def decode_command(args: argparse.Namespace) -> None:
     audio_path = resolve_input_audio(args.file)
 
-    print("Starting V4.9 chunked decode...")
+    print("Starting chunked decode...")
 
     _crypto_meta, payload = read_audio_payload(audio_path)
 
@@ -1214,12 +1308,19 @@ def decode_command(args: argparse.Namespace) -> None:
             f"expected {header.checksum}, got {actual_checksum}"
         )
 
-    if header.payload_mode == BUNDLE_PAYLOAD_MODE or is_bundle_container(restored_payload):
+    if header.payload_mode == BUNDLE_PAYLOAD_MODE or is_bundle_container(
+        restored_payload
+    ):
         restore_bundle_payload(
             audio_path=audio_path,
             restored_payload=restored_payload,
             bundle_checksum=actual_checksum,
-            output_dir=resolve_bundle_output_dir(args.output),
+            output_dir=(
+                resolve_bundle_output_dir(args.output)
+                if args.output
+                else None
+            ),
+            bundle_name=header.relative_path,
         )
         return
 
@@ -1238,16 +1339,39 @@ def decode_command(args: argparse.Namespace) -> None:
     print(f"Output file       : {output_path}")
     print(f"Original name     : {header.original_name}")
     print(f"MIME type         : {header.mime_type}")
-    print(f"Checksum          : {actual_checksum}")
 
+    if header.relative_path:
+        print(f"Relative path     : {header.relative_path}")
+
+    print(f"Checksum          : {actual_checksum}")
 
 def restore_bundle_payload(
     audio_path: Path,
     restored_payload: bytes,
     bundle_checksum: str,
-    output_dir: Path,
+    output_dir: Path | None = None,
+    bundle_name: str | None = None,
 ) -> None:
     files = parse_bundle_container(restored_payload)
+
+    inferred_root = bundle_name
+
+    if inferred_root is None:
+        roots = {
+            Path(file_header.relative_path).parts[0]
+            for file_header, _file_payload in files
+            if file_header.relative_path
+            and len(Path(file_header.relative_path).parts) > 1
+        }
+
+        if len(roots) == 1:
+            inferred_root = next(iter(roots))
+
+    if output_dir is None:
+        output_dir = resolve_bundle_output_dir(
+            None,
+            inferred_root,
+        )
 
     output_dir.mkdir(
         parents=True,
@@ -1261,9 +1385,27 @@ def restore_bundle_payload(
     print(f"Bundle checksum   : {bundle_checksum}")
 
     for file_header, file_payload in files:
+        restore_name = file_header.relative_path or file_header.original_name
+        restore_path = Path(restore_name)
+
+        if restore_path.is_absolute() or ".." in restore_path.parts:
+            raise ValueError(
+                f"Unsafe restore path in bundle: {restore_name}"
+            )
+
+        if (
+            inferred_root
+            and restore_path.parts
+            and restore_path.parts[0] == inferred_root
+        ):
+            restore_path = Path(*restore_path.parts[1:])
+
+        target_dir = output_dir / restore_path.parent
+        target_dir.mkdir(parents=True, exist_ok=True)
+
         output_path = unique_output_path(
-            output_dir,
-            file_header.original_name,
+            target_dir,
+            restore_path.name,
         )
 
         write_file(
@@ -1275,41 +1417,7 @@ def restore_bundle_payload(
 
 
 def unbundle_command(args: argparse.Namespace) -> None:
-    audio_path = resolve_input_audio(args.file)
-
-    print("Starting V4.9 chunked bundle restore...")
-
-    _crypto_meta, payload = read_audio_payload(audio_path)
-
-    private_key_path = resolve_default_private_key(args.private_key)
-
-    require_touch_id(TOUCH_ID_UNBUNDLE_REASON)
-
-    container = decode_chunked_payload(
-        payload=payload,
-        private_key=private_key_path,
-    )
-
-    header, restored_payload = parse_container(container)
-
-    if header.payload_mode != BUNDLE_PAYLOAD_MODE:
-        raise ValueError("Audio payload is not a bundle")
-
-    actual_checksum = compute_checksum(restored_payload)
-
-    if not verify_checksum(header.checksum, actual_checksum):
-        raise ValueError(
-            "Bundle checksum mismatch: "
-            f"expected {header.checksum}, got {actual_checksum}"
-        )
-
-    restore_bundle_payload(
-        audio_path=audio_path,
-        restored_payload=restored_payload,
-        bundle_checksum=actual_checksum,
-        output_dir=resolve_bundle_output_dir(args.output),
-    )
-
+    decode_command(args)
 
 def inspect_command(args: argparse.Namespace) -> None:
     audio_path = resolve_input_audio(args.file)
