@@ -80,3 +80,6 @@ unbundle:
 		exit 1; \
 	fi
 	$(PYTHON) -m cypher.main unbundle "$(ARG1)"
+
+gui:
+	$(PYTHON) -m cypher.gui

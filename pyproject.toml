@@ -48,6 +48,7 @@ dependencies = [
     "cryptography>=42",
     "pyobjc-core>=10.0",
     "pyobjc-framework-LocalAuthentication>=10.0",
+    "PySide6>=6.7",
 ]
 
 [project.optional-dependencies]
@@ -62,6 +63,7 @@ dev = [
 [project.scripts]
 
 cypher = "cypher.main:main"
+cypher-gui = "cypher.gui:main"
 
 [tool.setuptools]
 
