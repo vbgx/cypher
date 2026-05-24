@@ -70,3 +70,13 @@ tree:
 
 %:
 	@:
+
+bundle:
+	$(PYTHON) -m cypher.main bundle $(filter-out $@,$(MAKECMDGOALS))
+
+unbundle:
+	@if [ -z "$(ARG1)" ]; then \
+		echo "Usage: make unbundle file.flac"; \
+		exit 1; \
+	fi
+	$(PYTHON) -m cypher.main unbundle "$(ARG1)"
