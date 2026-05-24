@@ -5,6 +5,7 @@ import argparse
 from cypher.audio import read_audio_payload
 from cypher.container import resolve_input_audio
 from cypher.crypto import CRYPTO_MODE_NONE
+from cypher.signatures import signature_status_for_file
 
 
 def inspect_command(args: argparse.Namespace) -> None:
@@ -65,6 +66,20 @@ def inspect_command(args: argparse.Namespace) -> None:
         )
 
     print(f"Stored payload : {len(payload):,} bytes")
+
+    signature = signature_status_for_file(audio_path)
+
+    print()
+    print("Signature")
+    print("---------")
+
+    if signature is None:
+        print("Status        : not signed")
+    else:
+        print("Status        : sidecar signature found")
+        print(f"Algorithm     : {signature.algorithm}")
+        print(f"Signed SHA256 : {signature.signed_sha256}")
+        print(f"Fingerprint   : {signature.public_key_fingerprint}")
 
 
 def recipients_command(args: argparse.Namespace) -> None:

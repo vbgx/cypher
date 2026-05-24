@@ -20,6 +20,7 @@ import cypher.container as container_mod
 import cypher.crypto as crypto_mod
 import cypher.inspect as inspect_mod
 import cypher.keys as keys_mod
+import cypher.signatures as signatures_mod
 
 from cypher.audio import *
 from cypher.benchmark import *
@@ -29,6 +30,7 @@ from cypher.container import *
 from cypher.crypto import *
 from cypher.inspect import *
 from cypher.keys import *
+from cypher.signatures import *
 
 PROJECT_NAME = "cypher"
 VERSION = "1.0.0"
@@ -64,6 +66,9 @@ def _sync_runtime_config() -> None:
 
     keys_mod.DEFAULT_PRIVATE_KEY_PATH = DEFAULT_PRIVATE_KEY_PATH
     keys_mod.DEFAULT_PUBLIC_KEY_PATH = DEFAULT_PUBLIC_KEY_PATH
+
+    signatures_mod.SIGNING_PRIVATE_KEY_PATH = Path(".keys/cypher_signing_private.pem")
+    signatures_mod.SIGNING_PUBLIC_KEY_PATH = Path(".keys/cypher_signing_public.pem")
 
     container_mod.resolve_input_file = resolve_input_file
     container_mod.resolve_input_audio = resolve_input_audio
@@ -185,19 +190,6 @@ def resolve_default_public_keys(
 ) -> list[str]:
     if no_encrypt:
         return []
-
-    if args_public_keys:
-        return list(args_public_keys)
-
-    if DEFAULT_PUBLIC_KEY_PATH.exists():
-        print(
-            "Warning: using default public key automatically: "
-            f"{DEFAULT_PUBLIC_KEY_PATH}. "
-            "Pass --public-key explicitly, or pass --no-encrypt to disable encryption."
-        )
-        return [str(DEFAULT_PUBLIC_KEY_PATH)]
-
-    return []
 
     if args_public_keys:
         return list(args_public_keys)
@@ -468,6 +460,22 @@ def recipients_command(args: argparse.Namespace) -> None:
     inspect_mod.recipients_command(args)
 
 
+
+def signing_keygen_command(args: argparse.Namespace) -> None:
+    _sync_runtime_config()
+    signatures_mod.signing_keygen_command(args)
+
+
+def sign_command(args: argparse.Namespace) -> None:
+    _sync_runtime_config()
+    signatures_mod.sign_command(args)
+
+
+def verify_command(args: argparse.Namespace) -> None:
+    _sync_runtime_config()
+    signatures_mod.verify_command(args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     _sync_runtime_config()
     parser = cli_mod.build_parser()
@@ -496,6 +504,12 @@ def build_parser() -> argparse.ArgumentParser:
                     subparser.set_defaults(func=key_info_command)
                 elif func is inspect_mod.recipients_command:
                     subparser.set_defaults(func=recipients_command)
+                elif func is signatures_mod.signing_keygen_command:
+                    subparser.set_defaults(func=signing_keygen_command)
+                elif func is signatures_mod.sign_command:
+                    subparser.set_defaults(func=sign_command)
+                elif func is signatures_mod.verify_command:
+                    subparser.set_defaults(func=verify_command)
 
     return parser
 

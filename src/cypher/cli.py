@@ -17,6 +17,13 @@ from cypher.keys import (
     keygen_command,
 )
 from cypher.container import decode_command, encode_command
+from cypher.signatures import (
+    SIGNING_PRIVATE_KEY_PATH,
+    SIGNING_PUBLIC_KEY_PATH,
+    sign_command,
+    signing_keygen_command,
+    verify_command,
+)
 
 PROJECT_NAME = "cypher"
 VERSION = "1.0.0"
@@ -113,6 +120,24 @@ def build_parser() -> argparse.ArgumentParser:
     key_info_parser.add_argument("file")
     key_info_parser.set_defaults(func=key_info_command)
 
+    signing_keygen_parser = subparsers.add_parser(
+        "signing-keygen",
+        help="Generate Ed25519 signing keypair",
+    )
+    signing_keygen_parser.add_argument(
+        "--private-key",
+        default=str(SIGNING_PRIVATE_KEY_PATH),
+    )
+    signing_keygen_parser.add_argument(
+        "--public-key",
+        default=str(SIGNING_PUBLIC_KEY_PATH),
+    )
+    signing_keygen_parser.add_argument(
+        "--force",
+        action="store_true",
+    )
+    signing_keygen_parser.set_defaults(func=signing_keygen_command)
+
     encode_parser = subparsers.add_parser(
         "encode",
         help="Encode one file into audio",
@@ -208,6 +233,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     recipients_parser.add_argument("file")
     recipients_parser.set_defaults(func=recipients_command)
+
+    sign_parser = subparsers.add_parser(
+        "sign",
+        help="Sign a file or audio payload with Ed25519",
+    )
+    sign_parser.add_argument("file")
+    sign_parser.add_argument(
+        "--private-key",
+        default=str(SIGNING_PRIVATE_KEY_PATH),
+    )
+    sign_parser.add_argument(
+        "--output",
+        default=None,
+        help="Signature manifest output path. Defaults to <file>.sig.",
+    )
+    sign_parser.set_defaults(func=sign_command)
+
+    verify_parser = subparsers.add_parser(
+        "verify",
+        help="Verify an Ed25519 signature manifest",
+    )
+    verify_parser.add_argument("file")
+    verify_parser.add_argument(
+        "--signature",
+        default=None,
+        help="Signature manifest path. Defaults to <file>.sig.",
+    )
+    verify_parser.add_argument(
+        "--public-key",
+        default=str(SIGNING_PUBLIC_KEY_PATH),
+    )
+    verify_parser.set_defaults(func=verify_command)
+
     return parser
 
 def main() -> None:
