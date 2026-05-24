@@ -17,6 +17,10 @@ import cypher.benchmark as benchmark_mod
 import cypher.bundle as bundle_mod
 import cypher.cli as cli_mod
 import cypher.container as container_mod
+
+_ORIGINAL_CONTAINER_DECODE_CHUNKED = (
+    container_mod.decode_chunked_payload
+)
 import cypher.crypto as crypto_mod
 import cypher.inspect as inspect_mod
 import cypher.keys as keys_mod
@@ -31,6 +35,7 @@ from cypher.crypto import *
 from cypher.inspect import *
 from cypher.keys import *
 from cypher.signatures import *
+from cypher.transport import *
 
 PROJECT_NAME = "cypher"
 VERSION = "1.0.0"
@@ -368,35 +373,28 @@ def encode_command(args: argparse.Namespace) -> None:
 
 
 
-def decode_chunked_payload(payload: bytes, private_key: str | None):
-    original_decrypt_payload = container_mod.decrypt_payload
-    original_decrypt_payload_multi = container_mod.decrypt_payload_multi
+
+
+
+
+def decode_chunked_payload(
+    payload: bytes,
+    private_key: str | None,
+):
+    original_decrypt_payload = (
+        container_mod.decrypt_payload
+    )
+    original_decrypt_payload_multi = (
+        container_mod.decrypt_payload_multi
+    )
 
     try:
-        container_mod.decrypt_payload = decrypt_payload
-        container_mod.decrypt_payload_multi = decrypt_payload_multi
-
-        from cypher.container import decode_chunked_payload as _decode_chunked_payload
-
-        return _decode_chunked_payload(
-            payload,
-            private_key,
+        container_mod.decrypt_payload = (
+            decrypt_payload
         )
-
-    finally:
-        container_mod.decrypt_payload = original_decrypt_payload
-        container_mod.decrypt_payload_multi = original_decrypt_payload_multi
-
-
-_ORIGINAL_CONTAINER_DECODE_CHUNKED = container_mod.decode_chunked_payload
-
-def decode_chunked_payload(payload: bytes, private_key: str | None):
-    original_decrypt_payload = container_mod.decrypt_payload
-    original_decrypt_payload_multi = container_mod.decrypt_payload_multi
-
-    try:
-        container_mod.decrypt_payload = decrypt_payload
-        container_mod.decrypt_payload_multi = decrypt_payload_multi
+        container_mod.decrypt_payload_multi = (
+            decrypt_payload_multi
+        )
 
         return _ORIGINAL_CONTAINER_DECODE_CHUNKED(
             payload,
@@ -404,26 +402,56 @@ def decode_chunked_payload(payload: bytes, private_key: str | None):
         )
 
     finally:
-        container_mod.decrypt_payload = original_decrypt_payload
-        container_mod.decrypt_payload_multi = original_decrypt_payload_multi
-
+        container_mod.decrypt_payload = (
+            original_decrypt_payload
+        )
+        container_mod.decrypt_payload_multi = (
+            original_decrypt_payload_multi
+        )
 
 def decode_command(args: argparse.Namespace) -> None:
     _sync_runtime_config()
 
-    container_mod.read_audio_payload = read_audio_payload
-    container_mod.decode_chunked_payload = decode_chunked_payload
-    container_mod.parse_container = parse_container
-    container_mod.compute_checksum = compute_checksum
-    container_mod.verify_checksum = verify_checksum
-    container_mod.resolve_input_audio = resolve_input_audio
-    container_mod.resolve_default_private_key = resolve_default_private_key
-    container_mod.require_touch_id = require_touch_id
-    container_mod.decrypt_payload = decrypt_payload
-    container_mod.decrypt_payload_multi = decrypt_payload_multi
+    original_read_audio_payload = container_mod.read_audio_payload
+    original_decode_chunked_payload = container_mod.decode_chunked_payload
+    original_parse_container = container_mod.parse_container
+    original_compute_checksum = container_mod.compute_checksum
+    original_verify_checksum = container_mod.verify_checksum
+    original_resolve_input_audio = container_mod.resolve_input_audio
+    original_resolve_default_private_key = (
+        container_mod.resolve_default_private_key
+    )
+    original_require_touch_id = container_mod.require_touch_id
+    original_decrypt_payload = container_mod.decrypt_payload
+    original_decrypt_payload_multi = container_mod.decrypt_payload_multi
 
-    container_mod.decode_command(args)
+    try:
+        container_mod.read_audio_payload = read_audio_payload
+        container_mod.decode_chunked_payload = decode_chunked_payload
+        container_mod.parse_container = parse_container
+        container_mod.compute_checksum = compute_checksum
+        container_mod.verify_checksum = verify_checksum
+        container_mod.resolve_input_audio = resolve_input_audio
+        container_mod.resolve_default_private_key = resolve_default_private_key
+        container_mod.require_touch_id = require_touch_id
+        container_mod.decrypt_payload = decrypt_payload
+        container_mod.decrypt_payload_multi = decrypt_payload_multi
 
+        container_mod.decode_command(args)
+
+    finally:
+        container_mod.read_audio_payload = original_read_audio_payload
+        container_mod.decode_chunked_payload = original_decode_chunked_payload
+        container_mod.parse_container = original_parse_container
+        container_mod.compute_checksum = original_compute_checksum
+        container_mod.verify_checksum = original_verify_checksum
+        container_mod.resolve_input_audio = original_resolve_input_audio
+        container_mod.resolve_default_private_key = (
+            original_resolve_default_private_key
+        )
+        container_mod.require_touch_id = original_require_touch_id
+        container_mod.decrypt_payload = original_decrypt_payload
+        container_mod.decrypt_payload_multi = original_decrypt_payload_multi
 
 def bundle_command(args: argparse.Namespace) -> None:
     _sync_runtime_config()

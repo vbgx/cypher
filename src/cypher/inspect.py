@@ -6,6 +6,7 @@ from cypher.audio import read_audio_payload
 from cypher.container import resolve_input_audio
 from cypher.crypto import CRYPTO_MODE_NONE
 from cypher.signatures import signature_status_for_file
+from cypher.transport import has_transport_envelope
 
 
 def inspect_command(args: argparse.Namespace) -> None:
@@ -66,6 +67,10 @@ def inspect_command(args: argparse.Namespace) -> None:
         )
 
     print(f"Stored payload : {len(payload):,} bytes")
+    print(
+        "Transport      : "
+        f"{crypto_meta.get('transport_mode', 'redundant-crc32' if has_transport_envelope(payload) else 'none')}"
+    )
 
     signature = signature_status_for_file(audio_path)
 

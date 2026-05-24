@@ -77,6 +77,15 @@ def add_audio_encode_options(command_parser: argparse.ArgumentParser) -> None:
         ),
     )
 
+    command_parser.add_argument(
+        "--redundancy",
+        action="store_true",
+        help=(
+            "Enable redundant transport frames with CRC recovery. "
+            "Improves resilience against localized audio payload corruption."
+        ),
+    )
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(

@@ -379,7 +379,8 @@ def bundle_command(args: argparse.Namespace) -> None:
         output_path=output_path,
         sample_rate=args.sample_rate,
         compression_level=args.compression_level,
-        public_key=args.public_key,
+        public_key=[] if getattr(args, "no_encrypt", False) else args.public_key,
+        redundancy=getattr(args, "redundancy", False),
     )
 
 

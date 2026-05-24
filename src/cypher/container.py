@@ -33,6 +33,11 @@ from cypher.keys import (
     DEFAULT_PUBLIC_KEY_PATH,
     require_touch_id,
 )
+from cypher.transport import (
+    decode_transport_payload,
+    encode_transport_payload,
+    has_transport_envelope,
+)
 
 PROJECT_NAME = "cypher"
 VERSION = "1.0.0"
@@ -450,38 +455,69 @@ def encode_chunked_payload(
     return serialized, crypto_mode, public_key_summary
 
 
-def decode_chunked_payload(payload: bytes, private_key: str | None) -> bytes:
+
+def decode_chunked_payload(
+    payload: bytes,
+    private_key: str | None,
+) -> bytes:
     cursor = 0
     rebuilt = b""
 
     while cursor < len(payload):
-        header_size = int.from_bytes(payload[cursor : cursor + 8], "big")
+        header_size = int.from_bytes(
+            payload[cursor : cursor + 8],
+            "big",
+        )
         cursor += 8
 
         header = ChunkHeader(
-            **json.loads(payload[cursor : cursor + header_size].decode("utf-8"))
+            **json.loads(
+                payload[
+                    cursor : cursor + header_size
+                ].decode("utf-8")
+            )
         )
         cursor += header_size
 
-        crypto_size = int.from_bytes(payload[cursor : cursor + 8], "big")
+        crypto_size = int.from_bytes(
+            payload[cursor : cursor + 8],
+            "big",
+        )
         cursor += 8
 
-        crypto_meta = json.loads(payload[cursor : cursor + crypto_size].decode("utf-8"))
+        crypto_meta = json.loads(
+            payload[
+                cursor : cursor + crypto_size
+            ].decode("utf-8")
+        )
         cursor += crypto_size
 
-        chunk_size = int.from_bytes(payload[cursor : cursor + 8], "big")
+        chunk_size = int.from_bytes(
+            payload[cursor : cursor + 8],
+            "big",
+        )
         cursor += 8
 
-        stored_chunk = payload[cursor : cursor + chunk_size]
+        stored_chunk = payload[
+            cursor : cursor + chunk_size
+        ]
         cursor += chunk_size
 
         if header.encrypted:
             if private_key is None:
-                raise ValueError("Private key path is required for encrypted chunks")
+                raise ValueError(
+                    "Private key path is required "
+                    "for encrypted chunks"
+                )
 
-            crypto_mode = crypto_meta.get("crypto_mode")
+            crypto_mode = crypto_meta.get(
+                "crypto_mode"
+            )
 
-            if crypto_mode == CRYPTO_MODE_X25519_AESGCM_MULTI:
+            if (
+                crypto_mode
+                == CRYPTO_MODE_X25519_AESGCM_MULTI
+            ):
                 compressed = decrypt_payload_multi(
                     ciphertext=stored_chunk,
                     crypto_meta=crypto_meta,
@@ -496,7 +532,9 @@ def decode_chunked_payload(payload: bytes, private_key: str | None) -> bytes:
         else:
             compressed = stored_chunk
 
-        chunk = decompress_container(compressed)
+        chunk = decompress_container(
+            compressed
+        )
 
         if len(chunk) != header.raw_size:
             raise ValueError(
@@ -509,7 +547,6 @@ def decode_chunked_payload(payload: bytes, private_key: str | None) -> bytes:
 
     return rebuilt
 
-
 def encode_container_to_audio(
     container: bytes,
     header: CypherHeader,
@@ -517,6 +554,7 @@ def encode_container_to_audio(
     sample_rate: int,
     compression_level: int,
     public_key: Sequence[str] | None,
+    redundancy: bool = False,
 ) -> None:
     chunked_payload, crypto_mode, public_key_path = encode_chunked_payload(
         payload=container,
@@ -524,11 +562,17 @@ def encode_container_to_audio(
         public_key=public_key,
     )
 
+    transport_mode = "redundant-crc32" if redundancy else "none"
+
+    if redundancy:
+        chunked_payload = encode_transport_payload(chunked_payload)
+
     audio_payload = build_audio_payload(
         payload=chunked_payload,
         header=header,
         crypto_meta={
             "crypto_mode": crypto_mode,
+            "transport_mode": transport_mode,
         },
     )
 
@@ -549,6 +593,7 @@ def encode_container_to_audio(
     print(f"Audio             : {output_path}")
     print("Embedded metadata : yes")
     print(f"Encryption        : {crypto_mode}")
+    print(f"Transport         : {transport_mode}")
     print(f"Public key        : {public_key_path or 'none'}")
     print(f"Payload mode      : {header.payload_mode}")
 
@@ -595,6 +640,7 @@ def encode_command(args: argparse.Namespace) -> None:
         sample_rate=args.sample_rate,
         compression_level=args.compression_level,
         public_key=[] if getattr(args, "no_encrypt", False) else args.public_key,
+        redundancy=getattr(args, "redundancy", False),
     )
 
 
@@ -605,7 +651,14 @@ def decode_command(args: argparse.Namespace) -> None:
 
     print("Starting chunked decode...")
 
-    _crypto_meta, payload = read_audio_payload(audio_path)
+    crypto_meta, payload = read_audio_payload(audio_path)
+
+    if has_transport_envelope(payload):
+        print("Transport envelope : detected")
+        payload = decode_transport_payload(
+            payload,
+            allow_partial=getattr(args, "allow_partial", False),
+        )
 
     private_key_path = resolve_default_private_key(args.private_key)
 
