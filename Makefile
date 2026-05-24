@@ -1,31 +1,23 @@
 PYTHON := python
 PIP := pip
 
-INPUT_DIR := data/input
-AUDIO_DIR := data/audio
-OUTPUT_DIR := data/output
-
-CMD := $(firstword $(MAKECMDGOALS))
 ARG1 := $(word 2,$(MAKECMDGOALS))
 ARG2 := $(word 3,$(MAKECMDGOALS))
-
-ENCODE_STEM := $(basename $(ARG1))
-DECODE_STEM := $(basename $(ARG2))
+FORMAT ?= flac
 
 .PHONY: help install install-dev test lint format typecheck check clean tree encode decode
 
 help:
 	@echo "Usage:"
+	@echo "  make encode file.pdf"
 	@echo "  make encode image.jpg"
-	@echo "  make encode image.png"
-	@echo "  make decode image.flac restored.jpg"
-	@echo "  make decode image.wav restored.png"
+	@echo "  make encode archive.zip"
+	@echo "  make encode file.bin FORMAT=wav"
+	@echo "  make decode file.flac"
+	@echo "  make decode file.flac restored.pdf"
 	@echo ""
-	@echo "Encode:"
-	@echo "  data/input/image.jpg -> data/audio/image.flac"
-	@echo ""
-	@echo "Decode:"
-	@echo "  data/audio/image.flac -> data/output/restored.jpg"
+	@echo "Supported lossless audio formats: wav, flac"
+	@echo "MP3 is rejected because it is lossy."
 
 install:
 	$(PIP) install -e .
@@ -60,19 +52,20 @@ tree:
 
 encode:
 	@if [ -z "$(ARG1)" ]; then \
-		echo "Usage: make encode image.jpg"; \
+		echo "Usage: make encode file.pdf"; \
 		exit 1; \
 	fi
-	cypher encode "$(ARG1)" --format flac
+	cypher encode "$(ARG1)" --format "$(FORMAT)"
 
 decode:
-	@if [ -z "$(ARG1)" ] || [ -z "$(ARG2)" ]; then \
-		echo "Usage: make decode image.flac restored.jpg"; \
+	@if [ -z "$(ARG1)" ]; then \
+		echo "Usage: make decode file.flac [output_name]"; \
 		exit 1; \
 	fi
-	cypher decode "$(ARG1)"
-	@if [ "$(DECODE_STEM)" != "" ]; then \
-		mv "$(OUTPUT_DIR)/$(basename $(ARG1)).png" "$(OUTPUT_DIR)/$(ARG2)"; \
+	@if [ -z "$(ARG2)" ]; then \
+		cypher decode "$(ARG1)"; \
+	else \
+		cypher decode "$(ARG1)" "$(ARG2)"; \
 	fi
 
 %:

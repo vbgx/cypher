@@ -1,30 +1,22 @@
 import argparse
 from pathlib import Path
 
-from cypher.audio_decoder import decode_audio
-from cypher.audio_encoder import encode_audio
-from cypher.checksum import compute_pixel_checksum, verify_checksum
+from cypher.audio_decoder import decode_audio_to_payload
+from cypher.audio_encoder import encode_payload_to_audio
+from cypher.checksum import compute_bytes_checksum, verify_checksum
 from cypher.config import (
     AUDIO_DIR,
     DEFAULT_AUDIO_FORMAT,
     DEFAULT_COMPRESSION_LEVEL,
     DEFAULT_SAMPLE_RATE,
     INPUT_DIR,
+    LOSSLESS_AUDIO_OUTPUT,
     OUTPUT_DIR,
-    SUPPORTED_AUDIO_OUTPUT,
+    UNSAFE_AUDIO_OUTPUT,
 )
-from cypher.header import create_header, get_pixel_count, load_header, save_header
-from cypher.image_reader import read_image
-from cypher.image_writer import write_image
-
-
-def resolve_input_image(name: str) -> Path:
-    path = Path(name)
-
-    if path.exists():
-        return path
-
-    return INPUT_DIR / name
+from cypher.file_reader import read_file_bytes, resolve_input_file
+from cypher.file_writer import write_file_bytes
+from cypher.header import create_header, load_header, save_header
 
 
 def resolve_input_audio(name: str) -> Path:
@@ -33,24 +25,32 @@ def resolve_input_audio(name: str) -> Path:
     if path.exists():
         return path
 
-    return AUDIO_DIR / name
+    candidate = AUDIO_DIR / name
+
+    if candidate.exists():
+        return candidate
+
+    raise FileNotFoundError(f"Audio file not found: {name}")
 
 
-def resolve_audio_output(
-    image_path: Path,
-    audio_format: str,
-) -> Path:
+def resolve_audio_output(input_path: Path, audio_format: str) -> Path:
     suffix = audio_format if audio_format.startswith(".") else f".{audio_format}"
 
-    if suffix not in SUPPORTED_AUDIO_OUTPUT:
+    if suffix in UNSAFE_AUDIO_OUTPUT:
+        raise ValueError(
+            "MP3 is lossy and cannot preserve arbitrary files bit-perfect. "
+            "Use WAV or FLAC."
+        )
+
+    if suffix not in LOSSLESS_AUDIO_OUTPUT:
         raise ValueError(f"Unsupported audio format: {suffix}")
 
-    return AUDIO_DIR / f"{image_path.stem}{suffix}"
+    return AUDIO_DIR / f"{input_path.stem}{suffix}"
 
 
-def resolve_image_output(
-    audio_path: Path,
+def resolve_decoded_output(
     output_name: str | None,
+    original_name: str,
 ) -> Path:
     if output_name is not None:
         output_path = Path(output_name)
@@ -60,73 +60,61 @@ def resolve_image_output(
 
         return OUTPUT_DIR / output_name
 
-    return OUTPUT_DIR / f"{audio_path.stem}.png"
+    return OUTPUT_DIR / original_name
 
 
 def encode_command(args: argparse.Namespace) -> None:
-    image_path = resolve_input_image(args.file)
+    input_path = resolve_input_file(args.file, INPUT_DIR)
+
     output_path = resolve_audio_output(
-        image_path=image_path,
+        input_path=input_path,
         audio_format=args.format,
     )
 
-    width, height, pixels = read_image(image_path)
+    payload = read_file_bytes(input_path)
+    checksum = compute_bytes_checksum(payload)
 
-    checksum = compute_pixel_checksum(pixels)
-
-    raw_size, compressed_size = encode_audio(
-        pixels=pixels,
+    raw_size, compressed_size = encode_payload_to_audio(
+        payload=payload,
         output_path=output_path,
         sample_rate=args.sample_rate,
         compression_level=args.compression_level,
     )
 
     header = create_header(
-        width=width,
-        height=height,
+        input_path=input_path,
         sample_rate=args.sample_rate,
         raw_size=raw_size,
         compressed_size=compressed_size,
         checksum=checksum,
     )
 
-    metadata_path = save_header(
-        header=header,
-        audio_path=output_path,
-    )
+    metadata_path = save_header(header, output_path)
 
     print("Encode completed.")
-    print(f"Image           : {image_path}")
-    print(f"Audio           : {output_path}")
-    print(f"Metadata        : {metadata_path}")
-    print(f"Size            : {width}x{height}")
-    print(f"Checksum        : {checksum}")
+    print(f"Input file       : {input_path}")
+    print(f"Audio            : {output_path}")
+    print(f"Metadata         : {metadata_path}")
+    print(f"MIME type        : {header.mime_type}")
+    print(f"Checksum         : {checksum}")
 
 
 def decode_command(args: argparse.Namespace) -> None:
     audio_path = resolve_input_audio(args.file)
-    output_path = resolve_image_output(
-        audio_path=audio_path,
-        output_name=args.output,
-    )
-
     header = load_header(audio_path)
 
-    pixels = decode_audio(
+    output_path = resolve_decoded_output(
+        output_name=args.output,
+        original_name=header.original_name,
+    )
+
+    payload = decode_audio_to_payload(
         path=audio_path,
         compressed_size=header.compressed_size,
         raw_size=header.raw_size,
     )
 
-    expected_pixels = get_pixel_count(header)
-
-    if len(pixels) != expected_pixels:
-        raise ValueError(
-            f"Decoded pixel count mismatch: expected {expected_pixels}, "
-            f"got {len(pixels)}"
-        )
-
-    actual_checksum = compute_pixel_checksum(pixels)
+    actual_checksum = compute_bytes_checksum(payload)
 
     if not verify_checksum(header.checksum, actual_checksum):
         raise ValueError(
@@ -134,103 +122,44 @@ def decode_command(args: argparse.Namespace) -> None:
             f"expected {header.checksum}, got {actual_checksum}"
         )
 
-    write_image(
-        path=output_path,
-        width=header.width,
-        height=header.height,
-        pixels=pixels,
-    )
+    write_file_bytes(output_path, payload)
 
     print("Decode completed.")
-    print(f"Audio           : {audio_path}")
-    print(f"Image           : {output_path}")
-    print(f"Size            : {header.width}x{header.height}")
-    print(f"Checksum        : {actual_checksum}")
+    print(f"Audio            : {audio_path}")
+    print(f"Output file      : {output_path}")
+    print(f"MIME type        : {header.mime_type}")
+    print(f"Checksum         : {actual_checksum}")
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cypher",
-        description="Encode images into lossless audio payloads and decode them back.",
+        description="Encode any file into lossless audio and decode it back.",
     )
 
-    subparsers = parser.add_subparsers(
-        dest="command",
-        required=True,
-    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
 
-    encode_parser = subparsers.add_parser(
-        "encode",
-        help="Encode image to audio",
-    )
-
-    encode_parser.add_argument(
-        "file",
-        help="Input image filename or path",
-    )
-
+    encode_parser = subparsers.add_parser("encode")
+    encode_parser.add_argument("file")
     encode_parser.add_argument(
         "--format",
         default=DEFAULT_AUDIO_FORMAT,
-        choices=["wav", "flac"],
-        help="Output audio format",
+        choices=["wav", "flac", "mp3"],
     )
-
-    encode_parser.add_argument(
-        "--sample-rate",
-        type=int,
-        default=DEFAULT_SAMPLE_RATE,
-        help="Audio sample rate",
-    )
-
+    encode_parser.add_argument("--sample-rate", type=int, default=DEFAULT_SAMPLE_RATE)
     encode_parser.add_argument(
         "--compression-level",
         type=int,
         default=DEFAULT_COMPRESSION_LEVEL,
         choices=range(0, 10),
         metavar="[0-9]",
-        help="zlib compression level",
     )
-
     encode_parser.set_defaults(func=encode_command)
 
-    decode_parser = subparsers.add_parser(
-        "decode",
-        help="Decode audio to image",
-    )
-
-    decode_parser.add_argument(
-        "file",
-        help="Input audio filename or path",
-    )
-
-    decode_parser.add_argument(
-        "output",
-        nargs="?",
-        default=None,
-        help="Optional output image filename or path",
-    )
-
+    decode_parser = subparsers.add_parser("decode")
+    decode_parser.add_argument("file")
+    decode_parser.add_argument("output", nargs="?", default=None)
     decode_parser.set_defaults(func=decode_command)
-
-    decore_parser = subparsers.add_parser(
-        "decore",
-        help="Alias for decode",
-    )
-
-    decore_parser.add_argument(
-        "file",
-        help="Input audio filename or path",
-    )
-
-    decore_parser.add_argument(
-        "output",
-        nargs="?",
-        default=None,
-        help="Optional output image filename or path",
-    )
-
-    decore_parser.set_defaults(func=decode_command)
 
     return parser
 

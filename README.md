@@ -1,276 +1,116 @@
 # cypher
 
-Encode images into sound.  
-Decode sound back into images.
+**Universal file ↔ audio lossless codec**
 
-`cypher` transforms an image into an audio representation and reconstructs the original image from that audio stream.
+`cypher` converts **any file type** into audio (`FLAC` / `WAV`) and reconstructs the original file **bit-perfect**.
 
-```txt
-IMAGE → AUDIO → IMAGE
-```
+Supported payloads include:
 
-The project is based on deterministic pixel serialization and RGB frequency mapping.
+- images
+- PDFs
+- videos
+- archives
+- source code
+- binaries
+- documents
+- audio
+- essentially **any MIME type**
 
 ---
 
 # Concept
 
-An image is read pixel by pixel.
-
-Traversal order:
+Traditional storage:
 
 ```txt
-line 1:
-(1,1) → (2,1) → ... → (width,1)
-
-line 2:
-(1,2) → (2,2) → ... → (width,2)
-
-...
-
-line N:
-(1,height) → ... → (width,height)
+file
+→ binary file
 ```
 
-Each pixel is converted into sound.
+cypher V4:
 
-The decoder performs the reverse operation.
+```
+ANY FILE
+↓
+raw bytes
+↓
+lossless compression
+↓
+PCM16 audio payload
+↓
+FLAC / WAV
+```
+
+Decode:
+
+```
+FLAC / WAV
+↓
+PCM16 payload
+↓
+decompression
+↓
+original bytes
+↓
+original file
+```
+
+Result:
+
+```
+INPUT FILE == OUTPUT FILE
+```
+
+verified by checksum.
 
 ---
 
-# Encoding model
+# Features
 
-Each RGB pixel:
-
-```txt
-R: 0–255
-G: 0–255
-B: 0–255
-```
-
-is represented by **three simultaneous frequencies**.
-
-Example mapping:
-
-```txt
-R → low frequency band
-G → medium frequency band
-B → high frequency band
-```
-
-Default ranges:
-
-```txt
-R: 300 Hz → 1000 Hz
-G: 1200 Hz → 1900 Hz
-B: 2100 Hz → 2800 Hz
-```
-
-Mapping formula:
-
-```txt
-freq_R = 300  + R × 700 / 255
-freq_G = 1200 + G × 700 / 255
-freq_B = 2100 + B × 700 / 255
-```
-
-Each pixel becomes a short audio frame.
-
----
-
-# Resolution independence
-
-Images may have **any resolution**.
-
-Dimensions are stored inside an audio header.
-
-The decoder does not need prior knowledge of image size.
-
-Supported examples:
-
-```txt
-32×32
-100×100
-1920×1080
-4096×4096
-...
-```
-
----
-
-# Audio format
-
-Generated audio uses:
-
-```txt
-WAV
-PCM
-```
-
-Structure:
-
-```txt
-HEADER
-+
-PIXEL STREAM
-```
-
----
-
-# Header
-
-The audio stream begins with metadata.
-
-Example:
-
-```txt
-MAGIC       = CYPHER
-VERSION     = 1
-WIDTH       = 100
-HEIGHT      = 100
-COLOR_MODE  = RGB
-PIXEL_MODE  = RGB_3_FREQ
-PIXEL_TIME  = 0.01
-CHECKSUM    = SHA256
-```
-
-Serialized example:
-
-```txt
-CYPHER|1|100|100|RGB|RGB_3_FREQ|0.01|sha256...
-```
-
-Header encoding may use binary FSK.
-
-Example:
-
-```txt
-0 → 1200 Hz
-1 → 2200 Hz
-```
-
----
-
-# Encode workflow
-
-```txt
-image
-↓
-read pixels
-↓
-serialize metadata
-↓
-map RGB → frequencies
-↓
-generate audio frames
-↓
-write WAV
-```
-
----
-
-# Decode workflow
-
-```txt
-WAV
-↓
-read header
-↓
-recover width / height
-↓
-split audio into frames
-↓
-extract frequencies
-↓
-recover RGB values
-↓
-rebuild image
-```
+- universal file support
+- any MIME type
+- lossless encoding
+- lossless decoding
+- FLAC output
+- WAV output
+- checksum verification
+- metadata sidecar
+- automatic original filename recovery
+- tqdm progress monitoring
+- deterministic roundtrip restoration
 
 ---
 
 # Installation
 
-Clone repository:
+Clone:
 
-```bash
-git clone https://github.com/yourname/cypher.git
+```
+git clone <repo>
 cd cypher
 ```
 
 Create environment:
 
-```bash
-python -m venv .venv
+```
+python-m venv .venv
 source .venv/bin/activate
 ```
 
-Install dependencies:
+Install:
 
-```bash
-pip install -e .
+```
+pip install-e .
 ```
 
 ---
 
-# Usage
+# Project Structure
 
-Encode image → audio:
-
-```bash
-cypher encode input.png output.wav
 ```
-
-Decode audio → image:
-
-```bash
-cypher decode output.wav restored.png
-```
-
-Custom pixel duration:
-
-```bash
-cypher encode input.png output.wav \
-    --pixel-duration 0.01
-```
-
----
-
-# Example
-
-Input:
-
-```txt
-100 × 100 image
-```
-
-Pixel count:
-
-```txt
-10 000 pixels
-```
-
-If:
-
-```txt
-1 pixel = 10 ms
-```
-
-Then:
-
-```txt
-10 000 × 10 ms
-=
-100 seconds audio
-```
-
----
-
-# Repository structure
-
-```txt
 cypher/
 ├── README.md
+├── Makefile
 ├── pyproject.toml
 ├── data/
 │   ├── input/
@@ -280,18 +120,341 @@ cypher/
 │   └── cypher/
 │       ├── __init__.py
 │       ├── cli.py
-│       ├── image_reader.py
-│       ├── image_writer.py
+│       ├── config.py
+│       ├── header.py
+│       ├── checksum.py
 │       ├── audio_encoder.py
 │       ├── audio_decoder.py
-│       ├── header.py
-│       ├── mapping.py
-│       ├── checksum.py
-│       └── config.py
+│       ├── file_reader.py
+│       └── file_writer.py
 └── tests/
-    ├── test_mapping.py
-    ├── test_header.py
-    └── test_roundtrip.py
+```
+
+---
+
+# Usage
+
+## Encode
+
+Place any file inside:
+
+```
+data/input/
+```
+
+Examples:
+
+```
+data/input/report.pdf
+data/input/video.mp4
+data/input/py.py
+data/input/archive.zip
+data/input/image.jpg
+```
+
+Encode:
+
+```
+make encode report.pdf
+```
+
+or:
+
+```
+make encode video.mp4
+```
+
+or:
+
+```
+make encode py.py
+```
+
+Default:
+
+```
+output format = FLAC
+```
+
+Produces:
+
+```
+data/audio/report.flac
+data/audio/report.json
+```
+
+---
+
+## WAV output
+
+Use WAV instead of FLAC:
+
+```
+make encode report.pdfFORMAT=wav
+```
+
+Produces:
+
+```
+data/audio/report.wav
+```
+
+---
+
+## Decode
+
+Decode from audio:
+
+```
+make decode report.flac
+```
+
+or specify output filename:
+
+```
+make decode report.flac report_restored.pdf
+```
+
+Examples:
+
+```
+make decode video.flac video_decoded.mp4
+make decode py.flac py_decoded.py
+make decode archive.flac archive_restored.zip
+```
+
+Produces:
+
+```
+data/output/
+```
+
+---
+
+# Important Decode Rule
+
+Decode always takes the **audio file** as input.
+
+Correct:
+
+```
+make encode py.py
+make decode py.flac py_decoded.py
+```
+
+Incorrect:
+
+```
+make decode py.py py_decoded.py
+```
+
+because `decode` expects:
+
+```
+.flac
+or
+.wav
+```
+
+---
+
+# Examples
+
+## PDF
+
+Encode:
+
+```
+make encode rapport.pdf
+```
+
+Decode:
+
+```
+make decode rapport.flac rapport_restored.pdf
+```
+
+---
+
+## MP4 Video
+
+Encode:
+
+```
+make encode video.mp4
+```
+
+Decode:
+
+```
+make decode video.flac video_decoded.mp4
+```
+
+---
+
+## Python Source Code
+
+Encode:
+
+```
+make encode py.py
+```
+
+Decode:
+
+```
+make decode py.flac py_decoded.py
+```
+
+---
+
+## ZIP Archive
+
+Encode:
+
+```
+make encode archive.zip
+```
+
+Decode:
+
+```
+make decode archive.flac archive_restored.zip
+```
+
+---
+
+# Metadata
+
+Each encoded payload generates metadata.
+
+Example:
+
+```
+data/audio/video.flac
+data/audio/video.json
+```
+
+Metadata stores:
+
+- original filename
+- extension
+- MIME type
+- sample rate
+- payload size
+- compressed size
+- checksum
+- codec version
+- compression algorithm
+
+---
+
+# Integrity Verification
+
+cypher uses SHA256 verification.
+
+Encode:
+
+```
+checksum generated
+```
+
+Decode:
+
+```
+checksum verified
+```
+
+Failure:
+
+```
+checksum mismatch
+→ decode aborted
+```
+
+---
+
+# Compression
+
+Current backend:
+
+```
+zlib
+```
+
+Pipeline:
+
+```
+raw bytes
+→ zlib compression
+→ PCM16 audio samples
+→ FLAC / WAV
+```
+
+---
+
+# Progress Monitoring
+
+Large payloads show live progress.
+
+Example:
+
+```
+Compressing payload...
+Raw size          : 11,930,126 bytes
+
+Packing samples:
+████████████████████ 100%
+
+Writing audio:
+data/audio/video.flac
+```
+
+Decode:
+
+```
+Reading audio...
+Unpacking samples:
+████████████████████ 100%
+
+Decompressing payload...
+Audio decode completed.
+```
+
+---
+
+# Audio Formats
+
+## FLAC
+
+Recommended.
+
+Properties:
+
+- lossless
+- compact
+- smaller output
+- bit-perfect recovery
+
+## WAV
+
+Supported.
+
+Properties:
+
+- lossless
+- larger files
+- debugging / compatibility
+
+## MP3
+
+Not supported for lossless restoration.
+
+Reason:
+
+```
+MP3 is lossy.
+Arbitrary file bytes cannot be reconstructed reliably.
 ```
 
 ---
@@ -300,46 +463,64 @@ cypher/
 
 ## V1
 
-- PNG / JPG input
-- WAV output
-- RGB support
-- audio header
-- deterministic pixel traversal
-- RGB → frequency mapping
-- decode support
-- checksum validation
+RGB → frequency mapping.
+
+```
+image
+→ frequencies
+→ FFT decode
+```
+
+Large files.
+
+---
 
 ## V2
 
-- lossless encoding improvements
-- compression
-- adaptive frequency allocation
-- alpha channel support
-- grayscale mode
-- stereo encoding
-- streaming mode
+Fixed-frequency RGB amplitude encoding.
+
+Improved but still audio-heavy.
+
+---
 
 ## V3
 
-- real-time encoding
-- spectrogram visualization
-- live image/audio conversion
-- experimental cryptographic modes
+Lossless RGB payload transport.
+
+```
+RGB bytes
+→ compression
+→ audio payload
+```
 
 ---
 
-# Goals
+## V4 (current)
 
-`cypher` explores:
+Universal file codec.
 
-- image serialization
-- signal encoding
-- audio representation of visual data
-- reversible media transformation
-- deterministic multimedia encoding
+```
+ANY FILE
+→ bytes
+→ compression
+→ audio
+→ original file
+```
 
 ---
 
-# License
+## Future Ideas
 
-MIT
+Potential V5:
+
+- Brotli backend
+- LZMA backend
+- chunked streaming
+- encrypted payload mode
+- Reed-Solomon error correction
+- steganographic transport mode
+- embedded metadata inside audio
+- multi-file payload bundles
+- experimental MP3 robust mode
+
+---
