@@ -380,3 +380,18 @@ Potential future directions:
 - encrypted `.keys` storage
 - payload deduplication
 - audio watermarking
+
+--
+
+V4.6 → encrypted metadata mode
+OK   (inspect ne révèle plus filename/mime)
+
+V4.7 → bundle mode
+      1 FLAC = plusieurs fichiers
+
+V4.8 → chunked transport
+      gros payloads / streaming
+
+V5 → password-protected private keys
+     + signatures
+     + multi-recipient encryption

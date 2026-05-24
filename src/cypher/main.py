@@ -19,7 +19,7 @@ from tqdm import tqdm
 
 
 PROJECT_NAME = "cypher"
-VERSION = "0.4.5"
+VERSION = "0.4.6"
 
 MAGIC = "CYPHER"
 CONTAINER_MAGIC = b"CYPHER45"
@@ -348,30 +348,62 @@ def build_audio_payload(
     header: CypherHeader,
     crypto_meta: dict[str, str] | None = None,
 ) -> bytes:
-    meta = crypto_meta or {"crypto_mode": CRYPTO_MODE_NONE}
 
-    public_meta = {
-        "cypher_version": VERSION,
-        "original_name": header.original_name,
-        "original_suffix": header.original_suffix,
-        "mime_type": header.mime_type,
-        "raw_size": str(header.raw_size),
-        "checksum": header.checksum,
-        "crypto_mode": meta["crypto_mode"],
-        "payload_mode": PAYLOAD_MODE,
-        "compression_algorithm": COMPRESSION_ALGORITHM,
+    meta = crypto_meta or {
+        "crypto_mode": CRYPTO_MODE_NONE,
     }
+
+    crypto_mode = meta["crypto_mode"]
+
+    if crypto_mode == CRYPTO_MODE_NONE:
+
+        public_meta = {
+            "cypher_version": VERSION,
+            "original_name": header.original_name,
+            "original_suffix": header.original_suffix,
+            "mime_type": header.mime_type,
+            "raw_size": str(header.raw_size),
+            "checksum": header.checksum,
+            "payload_mode": PAYLOAD_MODE,
+            "compression_algorithm": COMPRESSION_ALGORITHM,
+        }
+
+    else:
+
+        public_meta = {
+            "cypher_version": VERSION,
+            "payload_mode": "ENCRYPTED_CONTAINER",
+            "compression_algorithm": COMPRESSION_ALGORITHM,
+        }
 
     meta = {
         **meta,
         "public": public_meta,
     }
 
-    meta_bytes = json.dumps(meta, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    meta_size = len(meta_bytes).to_bytes(8, byteorder="big")
-    payload_size = len(payload).to_bytes(8, byteorder="big")
+    meta_bytes = json.dumps(
+        meta,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
 
-    return AUDIO_MAGIC + meta_size + payload_size + meta_bytes + payload
+    meta_size = len(meta_bytes).to_bytes(
+        8,
+        byteorder="big",
+    )
+
+    payload_size = len(payload).to_bytes(
+        8,
+        byteorder="big",
+    )
+
+    return (
+        AUDIO_MAGIC
+        + meta_size
+        + payload_size
+        + meta_bytes
+        + payload
+    )
 
 
 def parse_audio_payload(audio_payload: bytes) -> tuple[dict[str, str], bytes]:
@@ -672,27 +704,73 @@ def decode_command(args: argparse.Namespace) -> None:
 
 
 def inspect_command(args: argparse.Namespace) -> None:
+
     audio_path = resolve_input_audio(args.file)
 
     print("Inspecting cypher audio...")
+
     crypto_meta, payload = read_audio_payload(audio_path)
 
     public_meta = crypto_meta.get("public", {})
-    crypto_mode = crypto_meta.get("crypto_mode", CRYPTO_MODE_NONE)
+
+    crypto_mode = crypto_meta.get(
+        "crypto_mode",
+        CRYPTO_MODE_NONE,
+    )
 
     print()
     print("Cypher payload")
     print("--------------")
+
     print(f"Audio file     : {audio_path}")
-    print(f"Original name  : {public_meta.get('original_name', 'unknown')}")
-    print(f"Original suffix: {public_meta.get('original_suffix', 'unknown')}")
-    print(f"MIME type      : {public_meta.get('mime_type', 'unknown')}")
-    print(f"Raw size       : {public_meta.get('raw_size', 'unknown')} bytes")
-    print(f"Checksum       : {public_meta.get('checksum', 'unknown')}")
-    print(f"Encryption     : {crypto_mode}")
-    print(f"Payload mode   : {public_meta.get('payload_mode', 'unknown')}")
-    print(f"Compression    : {public_meta.get('compression_algorithm', 'unknown')}")
-    print(f"Stored payload : {len(payload):,} bytes")
+
+    print(
+        f"Encryption     : {crypto_mode}"
+    )
+
+    print(
+        f"Cypher version : "
+        f"{public_meta.get('cypher_version','unknown')}"
+    )
+
+    print(
+        f"Payload mode   : "
+        f"{public_meta.get('payload_mode','unknown')}"
+    )
+
+    if crypto_mode == CRYPTO_MODE_NONE:
+
+        print(
+            f"Original name  : "
+            f"{public_meta.get('original_name','unknown')}"
+        )
+
+        print(
+            f"MIME type      : "
+            f"{public_meta.get('mime_type','unknown')}"
+        )
+
+        print(
+            f"Raw size       : "
+            f"{public_meta.get('raw_size','unknown')} bytes"
+        )
+
+        print(
+            f"Checksum       : "
+            f"{public_meta.get('checksum','unknown')}"
+        )
+
+    else:
+
+        print()
+        print(
+            "Metadata hidden "
+            "(encrypted payload mode)"
+        )
+
+    print(
+        f"Stored payload : {len(payload):,} bytes"
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
