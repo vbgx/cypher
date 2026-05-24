@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import cast
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
@@ -364,15 +365,20 @@ class CypherGui(QMainWindow):
         self.worker: CommandWorker | None = None
         self.has_real_progress = False
         self.last_artifact: Path | None = None
-
         self.sound_process: subprocess.Popen[bytes] | None = None
 
         self.files_list = QListWidget()
-        self.files_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.files_list.setSelectionMode(
+            QListWidget.SelectionMode.ExtendedSelection
+        )
 
         self.audio_label = QLabel("NO AUDIO SELECTED")
+
         self.public_keys_list = QListWidget()
-        self.public_keys_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.public_keys_list.setSelectionMode(
+            QListWidget.SelectionMode.ExtendedSelection
+        )
+
         self.logs = QTextEdit()
         self.logs.setReadOnly(True)
 
@@ -513,7 +519,12 @@ class CypherGui(QMainWindow):
         recipients_panel = QFrame()
         recipients_panel.setObjectName("Panel")
         recipients_layout = QVBoxLayout()
-        recipients_layout.addWidget(QLabel("▌ RECIPIENT PUBLIC KEYS // MULTI-RECIPIENT ENCRYPTION"))
+        recipients_layout.addWidget(
+            QLabel(
+                "▌ RECIPIENT PUBLIC KEYS // "
+                "MULTI-RECIPIENT ENCRYPTION"
+            )
+        )
         recipients_layout.addLayout(recipient_buttons)
         recipients_layout.addWidget(self.public_keys_list)
         recipients_panel.setLayout(recipients_layout)
@@ -566,7 +577,10 @@ class CypherGui(QMainWindow):
         return self.theme_select.currentText()
 
     def apply_theme(self, name: str) -> None:
-        QApplication.instance().setStyleSheet(THEMES[name])
+        app = cast(QApplication | None, QApplication.instance())
+
+        if app is not None:
+            app.setStyleSheet(THEMES[name])
 
         if name == "Matrix":
             self.subtitle_label.setText("MATRIX STREAM // ENCRYPTED SIGNAL VIEW")
@@ -602,10 +616,7 @@ class CypherGui(QMainWindow):
         self.logs.moveCursor(self.logs.textCursor().MoveOperation.End)
 
     def play_theme_sound(self) -> None:
-        if self.current_theme() == "Matrix":
-            sound = MATRIX_SOUND
-        else:
-            sound = OBSIDIAN_SOUND
+        sound = MATRIX_SOUND if self.current_theme() == "Matrix" else OBSIDIAN_SOUND
 
         if not sound.exists():
             self.log(f"Sound file missing: {sound}\n")
@@ -645,6 +656,7 @@ class CypherGui(QMainWindow):
 
         for raw_line in self.preview_label.text().splitlines():
             parts = raw_line.split(None, 1)
+
             if len(parts) == 2 and parts[0] in current:
                 current[parts[0]] = parts[1].strip()
 
@@ -660,6 +672,7 @@ class CypherGui(QMainWindow):
 
         for key, value in updates.items():
             target = mapping.get(key)
+
             if target:
                 current[target] = value
 
@@ -687,6 +700,7 @@ class CypherGui(QMainWindow):
 
         for pattern, field in patterns:
             match = re.search(pattern, stripped)
+
             if match:
                 self.update_artifact_preview(**{field: match.group(1).strip()})
                 return
@@ -727,18 +741,19 @@ class CypherGui(QMainWindow):
         else:
             mode = "BUNDLE"
 
-        self.metric_items.setText(f"ITEMS: {items}")
-        self.metric_size.setText(f"SIZE: {format_size(total_size)}")
         recipients = len(self.selected_public_keys)
 
+        self.metric_items.setText(f"ITEMS: {items}")
+        self.metric_size.setText(f"SIZE: {format_size(total_size)}")
         self.metric_mode.setText(f"MODE: {mode}")
 
         if recipients:
             self.metric_crypto.setText("CRYPTO: MULTI-RECIPIENT")
             self.metric_recipients.setText(f"RECIPIENTS: {recipients}")
-        else:
-            self.metric_crypto.setText("CRYPTO: AUTO")
-            self.metric_recipients.setText("RECIPIENTS: auto")
+            return
+
+        self.metric_crypto.setText("CRYPTO: AUTO")
+        self.metric_recipients.setText("RECIPIENTS: auto")
 
     def update_progress(self, value: int, phase: str, eta: str) -> None:
         if not self.has_real_progress:
@@ -757,6 +772,7 @@ class CypherGui(QMainWindow):
             "Select files",
             "data/input",
         )
+
         self.add_paths([Path(file_name) for file_name in files])
 
     def select_folder(self) -> None:
@@ -771,11 +787,11 @@ class CypherGui(QMainWindow):
 
     def add_paths(self, paths: list[Path]) -> None:
         for path in paths:
-            path = path.resolve()
+            resolved_path = path.resolve()
 
-            if path not in self.selected_paths:
-                self.selected_paths.append(path)
-                self.files_list.addItem(str(path))
+            if resolved_path not in self.selected_paths:
+                self.selected_paths.append(resolved_path)
+                self.files_list.addItem(str(resolved_path))
 
         self.status_label.setText(f"{len(self.selected_paths)} item(s) selected")
         self.phase_label.setText("PHASE: IDLE")
@@ -800,12 +816,12 @@ class CypherGui(QMainWindow):
     def clear_selection(self) -> None:
         self.selected_paths.clear()
         self.selected_audio = None
+        self.selected_public_keys.clear()
         self.has_real_progress = False
         self.last_artifact = None
 
         self.files_list.clear()
         self.public_keys_list.clear()
-        self.selected_public_keys.clear()
         self.audio_label.setText("NO AUDIO SELECTED")
         self.logs.clear()
         self.progress_bar.setRange(0, 100)
@@ -888,14 +904,14 @@ class CypherGui(QMainWindow):
             self.set_audio(Path(file_name))
 
     def set_audio(self, path: Path) -> None:
-        path = path.resolve()
+        resolved_path = path.resolve()
 
-        if path.suffix.lower() not in AUDIO_SUFFIXES:
-            self.log(f"Unsupported audio file: {path}\n")
+        if resolved_path.suffix.lower() not in AUDIO_SUFFIXES:
+            self.log(f"Unsupported audio file: {resolved_path}\n")
             return
 
-        self.selected_audio = path
-        self.audio_label.setText(str(path))
+        self.selected_audio = resolved_path
+        self.audio_label.setText(str(resolved_path))
         self.status_label.setText("AUDIO SELECTED")
         self.phase_label.setText("PHASE: IDLE")
         self.eta_label.setText("ETA: --")
@@ -941,6 +957,7 @@ class CypherGui(QMainWindow):
             return
 
         self.worker.cancel()
+
         if self.sound_process is not None and self.sound_process.poll() is None:
             self.sound_process.terminate()
 

@@ -86,8 +86,12 @@ clean-app:
 
 release-check:
 	$(PYTHON) -m cypher.main --version
-	$(PYTHON) -m cypher.main benchmark README.md
+	$(PYTHON) -m cypher.main encode --help
+	$(PYTHON) -m cypher.main bundle --help
+	$(PYTHON) -m cypher.main decode --help
 	$(PYTHON) -m cypher.main inspect --help
+	$(PYTHON) -m cypher.main benchmark README.md
+	$(PYTHON) -m pytest tests -q
 	git status --short
 
 clean:
@@ -104,3 +108,12 @@ tree:
 
 %:
 	@:
+
+lint:
+	python -m ruff check src tests
+
+typecheck:
+	python -m mypy 	  --ignore-missing-imports 	  src
+
+test:
+	python -m pytest tests -q

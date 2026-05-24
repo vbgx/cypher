@@ -186,3 +186,26 @@ Lossless.
 - payload deduplication
 - steganographic transport
 - progressive recovery
+
+---
+
+## Multi-recipient workflow
+
+Encrypt one payload for multiple recipients.
+
+```txt
+Alice public key ┐
+Bob public key   ├─ one encrypted FLAC/WAV artifact
+Cara public key  ┘
+
+Encode:
+
+cypher encode secret.pdf \
+  --public-key alice_public.pem \
+  --public-key bob_public.pem \
+  --public-key cara_public.pem
+
+Each recipient restores using their own private key.
+
+Never share private keys.
+
