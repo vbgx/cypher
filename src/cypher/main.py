@@ -1319,7 +1319,7 @@ def encode_container_to_audio(
     output_path: Path,
     sample_rate: int,
     compression_level: int,
-    public_key: str | None,
+    public_key: list[str] | None,
 ) -> None:
     chunked_payload, crypto_mode, public_key_path = encode_chunked_payload(
         payload=container,

@@ -34,6 +34,7 @@ One portable audio artifact.
 - relative path preservation
 - SHA256 integrity verification
 - X25519 + AES-GCM encryption
+- multi-recipient encryption
 - Touch ID + macOS Keychain workflow
 - CLI + GUI
 
@@ -178,7 +179,6 @@ Lossless.
 ## Future Directions
 
 - digital signatures
-- multi-recipient encryption
 - Brotli / LZMA backends
 - adaptive compression
 - Reed-Solomon correction
