@@ -1,0 +1,12 @@
+name: macOS notarization placeholder
+
+on:
+  workflow_dispatch:
+
+jobs:
+  info:
+    runs-on: macos-latest
+    steps:
+      - run: |
+          echo "Notarization disabled until Apple Developer secrets are configured."
+          echo "Required: APPLE_ID, APPLE_TEAM_ID, APPLE_APP_SPECIFIC_PASSWORD, Developer ID certificate."
