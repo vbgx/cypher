@@ -6,7 +6,7 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Qt, Signal
+from PySide6.QtCore import QThread, Qt, Signal, QTimer
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -23,6 +23,89 @@ from PySide6.QtWidgets import (
 )
 
 AUDIO_SUFFIXES = {".flac", ".wav"}
+
+
+CYBER_QSS = """
+QMainWindow {
+    background: #080A12;
+    color: #E6F1FF;
+}
+
+QWidget {
+    background: #080A12;
+    color: #E6F1FF;
+    font-family: Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+}
+
+QLabel {
+    color: #A7B4C8;
+    font-weight: 600;
+}
+
+QPushButton {
+    background: #111827;
+    color: #E6F1FF;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-weight: 700;
+}
+
+QPushButton:hover {
+    background: #1E293B;
+    border: 1px solid #A855F7;
+    color: #FFFFFF;
+}
+
+QPushButton:pressed {
+    background: #7C3AED;
+    border: 1px solid #F0ABFC;
+}
+
+QListWidget, QTextEdit {
+    background: #05070D;
+    color: #D1E7FF;
+    border: 1px solid #1E293B;
+    border-radius: 10px;
+    padding: 8px;
+    selection-background-color: #7C3AED;
+}
+
+QProgressBar {
+    background: #111827;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    height: 16px;
+    text-align: center;
+    color: #E6F1FF;
+    font-weight: bold;
+}
+
+QProgressBar::chunk {
+    background: qlineargradient(
+        x1:0, y1:0, x2:1, y2:0,
+        stop:0 #7C3AED,
+        stop:0.5 #EC4899,
+        stop:1 #22D3EE
+    );
+    border-radius: 8px;
+}
+
+QScrollBar:vertical {
+    background: #05070D;
+    width: 10px;
+}
+
+QScrollBar::handle:vertical {
+    background: #334155;
+    border-radius: 5px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #A855F7;
+}
+"""
 
 PHASE_WEIGHTS = {
     "scan": (0, 10),
@@ -234,6 +317,10 @@ class CypherGui(QMainWindow):
         self.selected_audio: Path | None = None
         self.worker: CommandWorker | None = None
         self.has_real_progress = False
+        self.pulse_state = 0
+
+        self.pulse_timer = QTimer(self)
+        self.pulse_timer.timeout.connect(self.animate_pulse)
 
         self.files_list = DropListWidget()
         self.files_list.paths_dropped.connect(self.add_paths)
@@ -318,6 +405,16 @@ class CypherGui(QMainWindow):
         self.logs.moveCursor(self.logs.textCursor().MoveOperation.End)
         self.logs.insertPlainText(text)
         self.logs.moveCursor(self.logs.textCursor().MoveOperation.End)
+
+    def animate_pulse(self) -> None:
+        self.pulse_state = (self.pulse_state + 1) % 4
+        dots = "." * (self.pulse_state + 1)
+
+        if self.worker is not None and self.worker.isRunning():
+            if not self.has_real_progress:
+                self.status_label.setText(
+                    f"SYSTEM: INITIALIZING PAYLOAD PIPELINE{dots}"
+                )
 
     def update_progress(self, value: int, phase: str, eta: str) -> None:
         if not self.has_real_progress:
@@ -427,9 +524,11 @@ class CypherGui(QMainWindow):
         self.worker.output.connect(self.log)
         self.worker.progress.connect(self.update_progress)
         self.worker.finished_ok.connect(self.command_finished)
+        self.pulse_timer.start(350)
         self.worker.start()
 
     def command_finished(self, code: int) -> None:
+        self.pulse_timer.stop()
         self.progress_bar.setRange(0, 100)
 
         if code == 0:
@@ -442,7 +541,10 @@ class CypherGui(QMainWindow):
             self.phase_label.setText("Phase: failed")
             self.eta_label.setText("ETA: -")
 
-        self.log(f"\nCommand finished with exit code {code}\n")
+        if code == 0:
+            self.log("\nOperation completed successfully.\n")
+        else:
+            self.log(f"\nOperation failed with exit code {code}.\n")
 
     def cancel_command(self) -> None:
         if self.worker is None or not self.worker.isRunning():
@@ -453,6 +555,7 @@ class CypherGui(QMainWindow):
         self.status_label.setText("Cancelling...")
         self.phase_label.setText("Phase: cancelling")
         self.eta_label.setText("ETA: -")
+        self.pulse_timer.stop()
         self.log("\nCancellation requested.\n")
 
     def encode_or_bundle(self) -> None:
@@ -512,6 +615,7 @@ class CypherGui(QMainWindow):
 
 def main() -> None:
     app = QApplication(sys.argv)
+    app.setStyleSheet(CYBER_QSS)
     window = CypherGui()
     window.show()
     sys.exit(app.exec())
