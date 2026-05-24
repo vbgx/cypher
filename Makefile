@@ -5,7 +5,7 @@ ARG1 := $(word 2,$(MAKECMDGOALS))
 ARG2 := $(word 3,$(MAKECMDGOALS))
 FORMAT ?= flac
 
-.PHONY: help install install-dev test lint format typecheck check clean tree encode decode
+.PHONY: help install install-dev test lint format typecheck check clean tree encode decode version
 
 help:
 	@echo "Usage:"
@@ -16,6 +16,10 @@ help:
 	@echo "  make decode file.flac"
 	@echo "  make decode file.flac restored.pdf"
 	@echo ""
+	@echo "Input files are resolved from current path or data/input/"
+	@echo "Encoded audio is written to data/audio/"
+	@echo "Decoded files are written to data/output/"
+	@echo ""
 	@echo "Supported lossless audio formats: wav, flac"
 	@echo "MP3 is rejected because it is lossy."
 
@@ -25,14 +29,17 @@ install:
 install-dev:
 	$(PIP) install -e ".[dev]"
 
+version:
+	$(PYTHON) -m cypher.main --version
+
 test:
 	pytest
 
 lint:
-	ruff check .
+	ruff check src tests
 
 format:
-	ruff format .
+	ruff format src tests
 
 typecheck:
 	mypy src
@@ -48,6 +55,7 @@ tree:
 	find . \
 		-path "./.git" -prune -o \
 		-path "./.venv" -prune -o \
+		-path "./__pycache__" -prune -o \
 		-print
 
 encode:
@@ -55,7 +63,7 @@ encode:
 		echo "Usage: make encode file.pdf"; \
 		exit 1; \
 	fi
-	cypher encode "$(ARG1)" --format "$(FORMAT)"
+	$(PYTHON) -m cypher.main encode "$(ARG1)" --format "$(FORMAT)"
 
 decode:
 	@if [ -z "$(ARG1)" ]; then \
@@ -63,9 +71,9 @@ decode:
 		exit 1; \
 	fi
 	@if [ -z "$(ARG2)" ]; then \
-		cypher decode "$(ARG1)"; \
+		$(PYTHON) -m cypher.main decode "$(ARG1)"; \
 	else \
-		cypher decode "$(ARG1)" "$(ARG2)"; \
+		$(PYTHON) -m cypher.main decode "$(ARG1)" "$(ARG2)"; \
 	fi
 
 %:

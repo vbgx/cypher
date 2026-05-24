@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cypher"
-version = "0.4.0"
-description = "Encode images into sound and decode sound back into images."
+version = "0.4.3"
+description = "Universal lossless file-to-audio codec with self-contained FLAC/WAV payloads."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
@@ -16,13 +16,17 @@ authors = [
 
 keywords = [
     "audio",
-    "image",
-    "signal-processing",
-    "cryptography",
-    "rgb",
+    "codec",
+    "lossless",
+    "file-encoding",
+    "flac",
     "wav",
-    "encoding",
-    "decoding"
+    "pcm16",
+    "compression",
+    "zlib",
+    "data-transport",
+    "binary-payload",
+    "self-contained"
 ]
 
 classifiers = [
@@ -32,15 +36,13 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Operating System :: OS Independent",
-    "Topic :: Multimedia :: Graphics",
     "Topic :: Multimedia :: Sound/Audio",
-    "Topic :: Scientific/Engineering :: Image Processing"
+    "Topic :: System :: Archiving :: Compression",
+    "Topic :: Utilities"
 ]
 
 dependencies = [
     "numpy>=2.2",
-    "Pillow>=11.2",
-    "scipy>=1.15",
     "soundfile>=0.13",
     "tqdm>=4.66",
 ]
@@ -56,7 +58,7 @@ dev = [
 
 [project.scripts]
 
-cypher = "cypher.cli:main"
+cypher = "cypher.main:main"
 
 [tool.setuptools]
 

@@ -1,8 +1,8 @@
 # cypher
 
-**Universal file ↔ audio lossless codec**
+Universal **lossless file ↔ audio codec**.
 
-`cypher` converts **any file type** into audio (`FLAC` / `WAV`) and reconstructs the original file **bit-perfect**.
+`cypher` converts **any file type** into self-contained audio (`FLAC` / `WAV`) and reconstructs the original file automatically.
 
 Supported payloads include:
 
@@ -12,9 +12,9 @@ Supported payloads include:
 - archives
 - source code
 - binaries
-- documents
 - audio
-- essentially **any MIME type**
+- documents
+- arbitrary MIME types
 
 ---
 
@@ -27,12 +27,16 @@ file
 → binary file
 ```
 
-cypher V4:
+cypher V4.3:
 
 ```
 ANY FILE
 ↓
 raw bytes
+↓
+embedded metadata header
+↓
+container
 ↓
 lossless compression
 ↓
@@ -50,18 +54,24 @@ PCM16 payload
 ↓
 decompression
 ↓
-original bytes
+container parsing
 ↓
-original file
+embedded metadata recovery
+↓
+original file restoration
 ```
 
-Result:
+The decoder automatically restores:
 
 ```
-INPUT FILE == OUTPUT FILE
+filename
+extension
+mime type
+payload
+checksum
 ```
 
-verified by checksum.
+No external metadata file required.
 
 ---
 
@@ -69,15 +79,15 @@ verified by checksum.
 
 - universal file support
 - any MIME type
-- lossless encoding
-- lossless decoding
+- lossless encode
+- lossless decode
 - FLAC output
 - WAV output
-- checksum verification
-- metadata sidecar
-- automatic original filename recovery
-- tqdm progress monitoring
-- deterministic roundtrip restoration
+- embedded metadata
+- automatic filename recovery
+- SHA256 integrity verification
+- tqdm progress bars
+- self-contained audio containers
 
 ---
 
@@ -116,18 +126,10 @@ cypher/
 │   ├── input/
 │   ├── audio/
 │   └── output/
-├── src/
-│   └── cypher/
-│       ├── __init__.py
-│       ├── cli.py
-│       ├── config.py
-│       ├── header.py
-│       ├── checksum.py
-│       ├── audio_encoder.py
-│       ├── audio_decoder.py
-│       ├── file_reader.py
-│       └── file_writer.py
-└── tests/
+└── src/
+    └── cypher/
+        ├── __init__.py
+        └── main.py
 ```
 
 ---
@@ -136,7 +138,7 @@ cypher/
 
 ## Encode
 
-Place any file inside:
+Place files inside:
 
 ```
 data/input/
@@ -147,7 +149,7 @@ Examples:
 ```
 data/input/report.pdf
 data/input/video.mp4
-data/input/py.py
+data/input/script.py
 data/input/archive.zip
 data/input/image.jpg
 ```
@@ -167,27 +169,26 @@ make encode video.mp4
 or:
 
 ```
-make encode py.py
+make encode script.py
 ```
 
-Default:
+Default output:
 
 ```
-output format = FLAC
+FLAC
 ```
 
 Produces:
 
 ```
 data/audio/report.flac
-data/audio/report.json
 ```
 
 ---
 
 ## WAV output
 
-Use WAV instead of FLAC:
+Use WAV:
 
 ```
 make encode report.pdfFORMAT=wav
@@ -201,15 +202,23 @@ data/audio/report.wav
 
 ---
 
-## Decode
+# Decode
 
-Decode from audio:
+Decode requires **only the audio file**.
+
+Automatic restore:
 
 ```
 make decode report.flac
 ```
 
-or specify output filename:
+Produces:
+
+```
+data/output/report.pdf
+```
+
+You can still override output name:
 
 ```
 make decode report.flac report_restored.pdf
@@ -218,42 +227,17 @@ make decode report.flac report_restored.pdf
 Examples:
 
 ```
-make decode video.flac video_decoded.mp4
-make decode py.flac py_decoded.py
-make decode archive.flac archive_restored.zip
+make decode video.flac
+make decode script.flac
+make decode archive.flac
 ```
 
-Produces:
+Automatic outputs:
 
 ```
-data/output/
-```
-
----
-
-# Important Decode Rule
-
-Decode always takes the **audio file** as input.
-
-Correct:
-
-```
-make encode py.py
-make decode py.flac py_decoded.py
-```
-
-Incorrect:
-
-```
-make decode py.py py_decoded.py
-```
-
-because `decode` expects:
-
-```
-.flac
-or
-.wav
+data/output/video.mp4
+data/output/script.py
+data/output/archive.zip
 ```
 
 ---
@@ -271,7 +255,7 @@ make encode rapport.pdf
 Decode:
 
 ```
-make decode rapport.flac rapport_restored.pdf
+make decode rapport.flac
 ```
 
 ---
@@ -287,12 +271,12 @@ make encode video.mp4
 Decode:
 
 ```
-make decode video.flac video_decoded.mp4
+make decode video.flac
 ```
 
 ---
 
-## Python Source Code
+## Python Source
 
 Encode:
 
@@ -303,7 +287,7 @@ make encode py.py
 Decode:
 
 ```
-make decode py.flac py_decoded.py
+make decode py.flac
 ```
 
 ---
@@ -319,39 +303,32 @@ make encode archive.zip
 Decode:
 
 ```
-make decode archive.flac archive_restored.zip
+make decode archive.flac
 ```
 
 ---
 
-# Metadata
+# Embedded Metadata
 
-Each encoded payload generates metadata.
+V4.3 stores metadata **inside the audio container**.
 
-Example:
-
-```
-data/audio/video.flac
-data/audio/video.json
-```
-
-Metadata stores:
+Embedded fields:
 
 - original filename
-- extension
+- original extension
 - MIME type
-- sample rate
-- payload size
-- compressed size
 - checksum
+- payload size
 - codec version
 - compression algorithm
+
+No `.json` sidecar file is generated.
 
 ---
 
 # Integrity Verification
 
-cypher uses SHA256 verification.
+cypher uses SHA256 validation.
 
 Encode:
 
@@ -374,7 +351,7 @@ checksum mismatch
 
 ---
 
-# Compression
+# Compression Pipeline
 
 Current backend:
 
@@ -386,9 +363,52 @@ Pipeline:
 
 ```
 raw bytes
+→ metadata header
+→ container
 → zlib compression
-→ PCM16 audio samples
-→ FLAC / WAV
+→ PCM16 samples
+→ FLAC/WAV
+```
+
+---
+
+# Audio Formats
+
+## FLAC
+
+Recommended.
+
+Properties:
+
+- lossless
+- smaller
+- compact
+- bit-perfect recovery
+
+---
+
+## WAV
+
+Supported.
+
+Properties:
+
+- lossless
+- larger files
+- compatibility mode
+
+---
+
+## MP3
+
+Rejected.
+
+Reason:
+
+```
+MP3 is lossy.
+
+Arbitrary file bytes cannot be restored reliably.
 ```
 
 ---
@@ -400,8 +420,8 @@ Large payloads show live progress.
 Example:
 
 ```
-Compressing payload...
-Raw size          : 11,930,126 bytes
+Compressing embedded container...
+Container size    : 11,930,126 bytes
 
 Packing samples:
 ████████████████████ 100%
@@ -417,44 +437,32 @@ Reading audio...
 Unpacking samples:
 ████████████████████ 100%
 
-Decompressing payload...
-Audio decode completed.
+Decompressing embedded container...
+Decode completed.
 ```
 
 ---
 
-# Audio Formats
+# CLI
 
-## FLAC
+Direct usage:
 
-Recommended.
-
-Properties:
-
-- lossless
-- compact
-- smaller output
-- bit-perfect recovery
-
-## WAV
-
-Supported.
-
-Properties:
-
-- lossless
-- larger files
-- debugging / compatibility
-
-## MP3
-
-Not supported for lossless restoration.
-
-Reason:
+Encode:
 
 ```
-MP3 is lossy.
-Arbitrary file bytes cannot be reconstructed reliably.
+python-m cypher.main encode report.pdf
+```
+
+Decode:
+
+```
+python-m cypher.main decode report.flac
+```
+
+Version:
+
+```
+python-m cypher.main--version
 ```
 
 ---
@@ -471,15 +479,11 @@ image
 → FFT decode
 ```
 
-Large files.
-
 ---
 
 ## V2
 
-Fixed-frequency RGB amplitude encoding.
-
-Improved but still audio-heavy.
+Amplitude-based RGB encoding.
 
 ---
 
@@ -487,25 +491,40 @@ Improved but still audio-heavy.
 
 Lossless RGB payload transport.
 
-```
-RGB bytes
-→ compression
-→ audio payload
-```
-
 ---
 
-## V4 (current)
+## V4.1
 
 Universal file codec.
 
 ```
 ANY FILE
 → bytes
-→ compression
 → audio
-→ original file
+→ restored file
 ```
+
+---
+
+## V4.2
+
+Embedded metadata containers.
+
+No external JSON dependency.
+
+---
+
+## V4.3 (current)
+
+Single-program architecture.
+
+```
+src/cypher/
+├── __init__.py
+└── main.py
+```
+
+Self-contained codec engine.
 
 ---
 
@@ -516,11 +535,14 @@ Potential V5:
 - Brotli backend
 - LZMA backend
 - chunked streaming
-- encrypted payload mode
+- payload encryption
 - Reed-Solomon error correction
-- steganographic transport mode
-- embedded metadata inside audio
-- multi-file payload bundles
-- experimental MP3 robust mode
+- steganographic transport
+- multi-file bundles
+- experimental robust MP3 mode
 
 ---
+
+# License
+
+MIT

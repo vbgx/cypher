@@ -1,18 +1,15 @@
 """
 cypher
 
-Encode images into audio.
-Decode audio back into images.
+Universal self-contained file ↔ audio codec.
 
-IMAGE -> AUDIO -> IMAGE
+Encode any file into lossless audio.
+Decode lossless audio back into the original file.
 """
 
-from cypher.config import (
-    PROJECT_NAME,
-    VERSION,
-)
+from cypher.main import VERSION
 
-__title__ = PROJECT_NAME
+__title__ = "cypher"
 __version__ = VERSION
 
 __all__ = [
